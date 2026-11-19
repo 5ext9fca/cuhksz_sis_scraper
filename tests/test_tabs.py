@@ -37,7 +37,7 @@ class TabTests(unittest.TestCase):
                      LoginRequired("expired"), {"terms": []}, {"terms": []}]):
                 for _ in range(2):
                     schedule.export_courses(root / "out.json", profile=Profile(username="test", password="test"),
-                                            browser_file=config, on_status=lambda _: None)
+                                            backend="browser", browser_file=config, on_status=lambda _: None)
             with sync_playwright() as pw:
                 context = launch_context(pw.chromium, Browser.load(config))
                 try:
@@ -74,11 +74,11 @@ class TabTests(unittest.TestCase):
             with patch.object(catalog, "_open_component", side_effect=opened), \
                  patch.object(catalog, "_fetch_catalog", return_value={"offerings": []}):
                 catalog.export_catalog(root / "catalog.json", term="2620", profile=Profile(),
-                                       browser_file=config)
+                                       backend="browser", browser_file=config)
             with patch.object(schedule, "_open_schedule", side_effect=opened), \
                  patch.object(schedule, "fetch_courses", side_effect=RuntimeError("interrupted")), \
                  self.assertRaisesRegex(RuntimeError, "interrupted"):
-                schedule.export_courses(root / "schedule.json", profile=Profile(), browser_file=config)
+                schedule.export_courses(root / "schedule.json", profile=Profile(), backend="browser", browser_file=config)
 
             with sync_playwright() as inspect:
                 ctx = launch_context(inspect.chromium, settings)

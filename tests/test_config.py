@@ -45,8 +45,13 @@ class ConfigTests(unittest.TestCase):
     def test_profile_cohort_is_used_for_web_edition(self):
         Path("profile.toml").write_text('major="甲"\ncohort=2025\nstream="CE"')
         with patch("cuhksz_sis_scraper.schemes.load_study_plan") as load:
+            metadata = dict(major="甲", source="plan.pdf", edition="2025", stream="CE", course_codes=["CSC1001"],
+                            course_evidence={}, sha256="revision")
+            load.return_value.metadata.return_value = metadata
             profile_plan(Profile.load())
             load.assert_called_once_with("甲", source=None, cohort=2025, stream="CE")
+            self.assertEqual(profile_plan(Profile.load(), offline=True).metadata(), metadata)
+            self.assertEqual(load.call_count, 1)
             profile_plan(Profile.load(), major="乙", cohort=2024)
             load.assert_called_with("乙", source=None, cohort=2024, stream=None)
 
@@ -72,7 +77,7 @@ class ConfigTests(unittest.TestCase):
         with patch("cuhksz_sis_scraper.schedule.sync_playwright") as playwright, \
              patch("cuhksz_sis_scraper.schedule._open_schedule") as opened, \
              patch("cuhksz_sis_scraper.schedule.fetch_courses", return_value={"terms": []}):
-            export_courses("schedule.json")
+            export_courses("schedule.json", backend="browser")
         launcher = playwright.return_value.__enter__.return_value.chromium.launch_persistent_context
         self.assertTrue(launcher.call_args.kwargs["headless"])
         self.assertEqual(launcher.call_args.kwargs["channel"], "chrome")

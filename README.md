@@ -4,7 +4,7 @@
 
 ## 推荐用法：配置 profile.toml
 
-先安装 uv，准备 Python 3.10 或更高版本和 Google Chrome。在项目目录中运行：
+先安装 uv，准备 Python 3.10 或更高版本。两个命令默认使用 HTTP。只有人工认证或显式选择浏览器后端时才需要安装配置的浏览器。在项目目录中运行：
 
 ```sh
 uv sync --locked
@@ -22,7 +22,7 @@ cohort = 2025
 stream = "Computer Engineering"
 ```
 
-- **登录**：账号密码一起留空时，程序优先复用已有会话。首次使用或登录过期时，在打开的学校页面选择「简体中文」并登录。需要自动登录时可同时填写两项；凭据以明文保存在本机，`profile.toml` 已加入 Git 忽略列表。
+- **登录**　同时填写账号和密码后，首次导出通过学校 ADFS 登录，后续优先复用 HTTP 会话。两项都留空或遇到人工验证时，在打开的学校页面完成认证。程序随后关闭本次创建的标签页，通过 HTTP 继续导出。凭据以明文保存在本机，`profile.toml` 已加入 Git 忽略列表。
 - **专业**：填好 `major` 后，目录查询默认按该专业的修读计划筛选。运行 `uv run sis-catalog --list-majors` 可查看支持的理工学院专业名。专业官网查询使用系统 `curl`，读取计划 PDF 需要 Poppler 的 `pdftotext`（macOS 可用 `brew install poppler` 安装）。
 - **入学年份和方向**：`cohort` 决定使用哪一届的修读计划，省略时使用官网最新版本。`stream` 填计划中的英文方向名，省略时合并各方向。只导出个人课表时，可省略这三项专业设置。
 
@@ -53,13 +53,24 @@ uv run sis-catalog --all-majors --term 2620 --subject ACT --subject CSC -o act-c
 uv run sis-catalog --from-catalog catalog-2620.json -o my-catalog-2620.json
 ```
 
-也可用 `--major`、`--cohort`、`--stream` 临时指定修读计划，或用 `--scheme` 读取本地计划 JSON、PDF 或官网计划链接。已有目录配合本地计划即可离线筛选。
+也可用 `--major`、`--cohort`、`--stream` 临时指定修读计划，或用 `--scheme` 读取本地计划 JSON、PDF 或官网计划链接。`--from-catalog` 全程离线，可使用本地计划，或复用此前实时查询为同一专业、届别和方向保存的计划缓存。首次离线使用请通过 `--scheme` 提供本地文件。
 
 ## 继续中断的导出
 
 实时查询目录时，每完成一个学科就保存一次进度。**重新运行原命令**即可从断点继续，全部完成后才替换输出文件。要从头刷新同一份目录，在原命令后加 `--restart`；要保留前一次进度并查询其他学期或范围，换一个输出路径。
 
 ## 浏览器设置
+
+排障或核对结果时，可在任一命令后加 `--backend browser`。例如：
+
+```sh
+uv run sis-export --backend browser -o schedule-browser.json
+uv run sis-catalog --backend browser --term 2620 -o catalog-browser.json
+```
+
+Python 的 `export_courses()` 和 `export_catalog()` 同样接受 `backend="http"`（默认）或 `backend="browser"`。使用已有 Playwright 页面时，继续调用 `fetch_courses(page)` 或 `fetch_catalog(page)`。
+
+HTTP 会话保存在 `profile_dir/http/` 下，按个人配置文件路径和账号隔离。人工认证需将 `headless` 设为 `false`。
 
 项目自带的 `browser.toml` 默认使用有窗口的 Google Chrome，并将登录会话保存在 `.sis-profile/`。需要后台运行时设 `headless = true`，并准备有效会话或在个人配置中填写登录凭据。若使用 Playwright 的 Chromium，先运行 `uv run playwright install chromium`，再从配置中移除 `channel` 行。使用 `--browser-config 路径` 可指定另一份浏览器配置。
 

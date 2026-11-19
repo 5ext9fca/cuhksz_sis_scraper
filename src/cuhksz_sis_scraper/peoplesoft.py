@@ -30,6 +30,27 @@ def form_values(form):
     return values
 
 
+def apply_changes(form, changes):
+    # PeopleSoft often replies with only the fields affected on the server.
+    # Retain edits made on the client for controls outside those replacements.
+    for name, value in changes.items():
+        fields = form.find_all(attrs={"name": name})
+        if not fields:
+            raise ScheduleError(f"SIS 当前表单缺少字段 {name}。")
+        for field in fields:
+            if field.name == "select":
+                for option in field.find_all("option"):
+                    option.attrs.pop("selected", None)
+                    if option.get("value", option.get_text()) == value:
+                        option["selected"] = ""
+            elif field.get("type", "").lower() in {"radio", "checkbox"}:
+                field.attrs.pop("checked", None)
+                if value is not None and value == field.get("value", "on"):
+                    field["checked"] = ""
+            else:
+                field["value"] = value
+
+
 def document(body):
     return BeautifulSoup(body, "html.parser")
 
@@ -107,12 +128,8 @@ class Component:
             raise ScheduleError("SIS 组件表单的提交地址或方式已变化。")
         if self.url.endswith("?&") and not urlsplit(endpoint).query:
             endpoint += "?&"
+        apply_changes(form, changes or {})
         payload = form_values(form)
-        for name, value in (changes or {}).items():
-            if value is None:
-                payload.pop(name, None)
-            else:
-                payload[name] = value
         payload.update(ICAction=key, ICAJAX="1", ICNAVTYPEDROPDOWN="0")
         self.form = None  # A lost POST response invalidates the previous state.
         body = self._read(endpoint, payload)
@@ -125,6 +142,8 @@ class Component:
             raise ScheduleError("SIS 返回的组件 XML 无效。") from exc
         state = re.search(r"ICStateNum\.value\s*=\s*(\d+)", root.findtext("GENSCRIPT[@id='onloadScript']", ""))
         if not state:
+            if any(login_page(document(f.text or "")) for f in root.findall("FIELD")):
+                raise LoginRequired("SIS 会话需要认证。")
             raise ScheduleError("SIS XML 缺少下一次提交的状态编号。")
         for field in root.findall("FIELD"):
             target = form.find(id=field.get("id"))

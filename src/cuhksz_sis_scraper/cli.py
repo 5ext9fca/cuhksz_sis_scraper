@@ -11,6 +11,7 @@ from .schedule import ScheduleError, export_courses
 
 
 def _config_options(parser: argparse.ArgumentParser) -> None:
+    parser.add_argument("--backend", choices=("http", "browser"), default="http")
     parser.add_argument("--profile", type=Path, help="用户配置，默认 ./profile.toml")
     parser.add_argument("--browser-config", type=Path, help="浏览器配置，默认 ./browser.toml")
 
@@ -21,7 +22,7 @@ def main() -> None:
     _config_options(parser)
     args = parser.parse_args()
     try:
-        result = export_courses(args.output, profile=args.profile, browser_file=args.browser_config)
+        result = export_courses(args.output, profile=args.profile, browser_file=args.browser_config, backend=args.backend)
     except (PlaywrightError, ScheduleError, OSError) as exc:
         parser.exit(1, f"导出失败：{exc}\n")
     for term in result["terms"]:
@@ -64,7 +65,7 @@ def catalog_main() -> None:
         if args.all_majors:
             profile = replace(profile, major="", stream="", cohort=None)
         plan = profile_plan(profile, major=args.major, source=args.scheme, cohort=args.cohort,
-                            stream=args.stream)
+                            stream=args.stream, offline=bool(args.from_catalog))
         if args.from_catalog and plan is None:
             parser.error("--from-catalog 需要指定专业或修读计划")
         output = args.output or Path("catalog-major.json" if plan else "catalog.json")
@@ -77,7 +78,7 @@ def catalog_main() -> None:
                 parser.error("输入目录的学期与 --term 不一致")
             save_courses(report, output)
         else:
-            report = export_catalog(output, profile=profile, browser_file=args.browser_config,
+            report = export_catalog(output, profile=profile, browser_file=args.browser_config, backend=args.backend,
                                     term=args.term, subjects=args.subject, plan=plan, restart=args.restart)
     except (ScheduleError, PlaywrightError, OSError, ValueError) as exc:
         parser.exit(1, f"导出失败：{exc}\n")

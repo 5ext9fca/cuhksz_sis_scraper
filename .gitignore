@@ -10,3 +10,4 @@ __pycache__/
 profile.toml
 # Local course exports (including custom output names)
 /*.json
+.sis-plans/

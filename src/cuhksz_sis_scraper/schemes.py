@@ -14,6 +14,7 @@ from .config import Profile
 from .models import validate_catalog
 from .login import ScheduleError
 from .web import download as _download
+from .schedule import save_courses
 
 PROGRAMMES = "https://sse.cuhk.edu.cn/Undergraduateprogrammes"
 _CODE = re.compile(r"([A-Z]{2,8})\s*(\d{4}[A-Z]?)")
@@ -262,7 +263,7 @@ def load_study_plan(major: str | None = None, *, source: str | Path | None = Non
 
 
 def profile_plan(profile: Profile, *, major: str | None = None, source: str | None = None,
-                 cohort: int | None = None, stream: str | None = None) -> StudyPlan | None:
+                 cohort: int | None = None, stream: str | None = None, offline: bool = False) -> StudyPlan | None:
     # Direct documents already identify an edition. JSON keys name their own majors.
     suffix = Path(urlsplit(source).path).suffix.lower() if source else ""
     if not source or suffix == ".json":
@@ -275,7 +276,24 @@ def profile_plan(profile: Profile, *, major: str | None = None, source: str | No
         cohort = profile.cohort
     if stream is None and suffix != ".json" and (not major or major == profile.major):
         stream = profile.stream or None
-    return load_study_plan(major, source=source, cohort=cohort, stream=stream)
+    if source and urlsplit(source).scheme not in {"https", "http"}:
+        return load_study_plan(major, source=source, cohort=cohort, stream=stream)
+    key = sha256(json.dumps([major, source, cohort, stream]).encode()).hexdigest()
+    cache = profile.source.parent / ".sis-plans" / (key + ".json")
+    if offline:
+        try:
+            data = json.loads(cache.read_bytes())
+            if data["version"] != 1:
+                raise ValueError
+            meta = data["plan"]
+            return StudyPlan(meta["major"], meta["source"], meta["edition"], meta["stream"],
+                             frozenset(meta["course_codes"]), meta["course_evidence"], meta["sha256"])
+        except (FileNotFoundError, KeyError, ValueError, TypeError) as exc:
+            raise ScheduleError("离线修读计划不可用，请用 --scheme 指定本地 JSON 或 PDF，或先运行实时目录查询。") from exc
+    plan = load_study_plan(major, source=source, cohort=cohort, stream=stream)
+    cache.parent.mkdir(parents=True, exist_ok=True)
+    save_courses(dict(version=1, plan=plan.metadata()), cache)
+    return plan
 
 
 def filter_catalog(report: dict, plan: StudyPlan, subjects: list[str] | None = None) -> dict:

@@ -353,25 +353,33 @@ def _open_schedule(context: BrowserContext, headless: bool, timeout_ms: int,
 
 
 def export_courses(output: str | Path, *, profile: Profile | str | Path | None = None,
-                   browser_file: str | Path | None = None, academic_career: str = "Undergraduate",
+                   backend: str = "http", browser_file: str | Path | None = None, academic_career: str = "Undergraduate",
                    on_status: Callable[[str], None] | None = None) -> dict:
-    """Open SIS in the configured browser, read all terms, and save JSON."""
+    """Read all terms with the selected backend and atomically save JSON."""
+    if backend not in {"http", "browser"}:
+        raise ScheduleError("backend 支持 http 或 browser。")
     profile = Profile.load(profile)
     browser = Browser.load(browser_file)
     notify = on_status if on_status is not None else lambda message: print(message, file=sys.stderr)
     with sync_playwright() as pw:
-        with export_session(launch_context(pw.chromium, browser)) as context:
-            for attempt in range(2):
-                page = _open_schedule(context, browser.headless, browser.login_timeout_ms, notify, profile)
-                try:
-                    report = fetch_courses(page, academic_career=academic_career,
-                                           login_timeout_ms=browser.login_timeout_ms)
-                    break
-                except LoginRequired:
-                    if attempt or (browser.headless and not profile.username):
-                        raise
-                    notify("导出途中会话失效，将在重新登录后从第一个学期开始。")
-                finally:
-                    close_page(page)
+        if backend == "http":
+            from .http_schedule import read_schedule
+            from .http_session import read_protected
+
+            report = read_protected(pw, browser, profile, notify, lambda c: read_schedule(c, academic_career))
+        else:
+            with export_session(launch_context(pw.chromium, browser)) as context:
+                for attempt in range(2):
+                    page = _open_schedule(context, browser.headless, browser.login_timeout_ms, notify, profile)
+                    try:
+                        report = fetch_courses(page, academic_career=academic_career,
+                                               login_timeout_ms=browser.login_timeout_ms)
+                        break
+                    except LoginRequired:
+                        if attempt or (browser.headless and not profile.username):
+                            raise
+                        notify("导出途中会话失效，将在重新登录后从第一个学期开始。")
+                    finally:
+                        close_page(page)
     save_courses(report, output)
     return report

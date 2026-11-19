@@ -70,7 +70,7 @@ class CheckpointTests(unittest.TestCase):
         term.locator.return_value.evaluate_all.return_value = ["2620"]
         term.locator.return_value.inner_text.return_value = "2026-27 第二学期"
         term.evaluate_all.return_value = ["BIO", "ECE"]
-        kwargs = dict(term="2620", profile=Profile(username="test", password="test"))
+        kwargs = dict(backend="browser", term="2620", profile=Profile(username="test", password="test"))
         def batch(frame, label, subject, plan):
             return [dict(course=asdict(Course(subject + " 1001", "示例", parse_requirements(""))),
                          sections=[])]

@@ -98,6 +98,20 @@ def _page_range(count: str) -> tuple[int, int, int]:
     return int(match[1]), int(match[2] or match[1]), int(match[3])
 
 
+def _merge_page(records, rows, first, last, expected, total):
+    count = f"{first}-{last}/{expected}"
+    if ((total is not None and total != expected) or not 1 <= first <= last <= expected
+            or first > len(records) + 1 or len(rows) != last - first + 1):
+        raise ScheduleError(f"教学班分页不完整 ({count})。")
+    for section in rows:
+        number = section["class_number"]
+        if number in records and records[number] != section:
+            raise ScheduleError(f"教学班 {number} 的分页数据冲突。")
+        records[number] = section
+    if len(records) != last:
+        raise ScheduleError(f"教学班分页含重复或遗漏记录 ({count})。")
+
+
 def _grid_records(frame: Frame, grid: Locator, read: Callable[[], list[dict]],
                   view_all: Locator, next_page: Locator) -> list[dict]:
     counter = grid.locator(".PSGRIDCOUNTER").first
@@ -108,17 +122,8 @@ def _grid_records(frame: Frame, grid: Locator, read: Callable[[], list[dict]],
         count = counter.inner_text().strip()
         first, last, expected = _page_range(count)
         rows = read()
-        if ((total is not None and total != expected) or not 1 <= first <= last <= expected
-                or first > len(records) + 1 or len(rows) != last - first + 1):
-            raise ScheduleError(f"教学班分页不完整 ({count})。")
+        _merge_page(records, rows, first, last, expected, total)
         total = expected
-        for section in rows:
-            number = section["class_number"]
-            if number in records and records[number] != section:
-                raise ScheduleError(f"教学班 {number} 的分页数据冲突。")
-            records[number] = section
-        if len(records) != last:
-            raise ScheduleError(f"教学班分页含重复或遗漏记录 ({count})。")
         if last == expected:
             return list(records.values())
         action = view_all if use_view_all and view_all.is_visible() else next_page
@@ -303,30 +308,8 @@ def _fetch_catalog(page: Page, term: str, subjects: Sequence[str] | None,
             term_label = term_select.locator("option:checked").inner_text()
             available = frame.locator(_SUBJECT + " option").evaluate_all(
                 "els => els.map(e => e.value).filter(Boolean)")
-        if isinstance(subjects, str):
-            subjects = [subjects]
-        selected = available if subjects is None else list(dict.fromkeys(
-            s.strip().upper() for s in subjects))
-        unknown = set(selected) - set(available)
-        if unknown or not selected:
-            raise ScheduleError(f"学科为空或 SIS 无此学科：{sorted(unknown)}")
-        if plan is not None:
-            prefixes = plan.subjects
-            selected = [subject for subject in selected if subject in prefixes]
-        if progress is not None:
-            progress.restore(dict(term=term, subjects=sorted(selected),
-                                  requested=None if subjects is None else sorted({
-                                      s.strip().upper() for s in subjects}),
-                                  plan=plan.metadata() if plan else None))
-        courses = []
-        for subject in selected:
-            if progress is not None and subject in progress.batches:
-                courses.extend(progress.batches[subject])
-                if on_status:
-                    on_status(f"{subject}  已从断点恢复")
-                continue
-            if on_status:
-                on_status(f"查询学科 {subject}（{len(selected)} 个学科）")
+        def read_subject(subject):
+            nonlocal frame, term_select
             with query_popups(page):
                 if frame.locator(_NEW).is_visible():
                     _update(frame, frame.locator(_NEW).click)
@@ -340,20 +323,49 @@ def _fetch_catalog(page: Page, term: str, subjects: Sequence[str] | None,
                     frame = page.main_frame
                     term_select = frame.locator(_TERM)
                     term_select.wait_for()
-            numbers = [s["class_number"] for c in batch for s in c["sections"]]
-            if len(numbers) != len(set(numbers)):
-                raise ScheduleError(f"{subject} 搜索结果含重复班号。")
-            if plan:
-                batch = [plan.annotate(c) for c in batch]
-            if progress is not None:
-                progress.commit(subject, batch)
-            courses.extend(batch)
-            if on_status:
-                on_status(f"{subject}  {len(batch)} 门课程，{sum(len(c['sections']) for c in batch)} 个教学班")
+            return batch
+
+        return _collect(term, subjects, on_status, plan, progress, term_label, available, read_subject)
     except (PlaywrightError, ScheduleError) as exc:
         if not page.is_closed() and _login_screen(page):
             raise LoginRequired("课程搜索会话已失效，请在学校页面重新登录。") from exc
         raise
+
+
+def _collect(term, subjects, on_status, plan, progress, term_label, available, read_subject):
+    if isinstance(subjects, str):
+        subjects = [subjects]
+    selected = available if subjects is None else list(dict.fromkeys(
+        s.strip().upper() for s in subjects))
+    unknown = set(selected) - set(available)
+    if unknown or not selected:
+        raise ScheduleError(f"学科为空或 SIS 无此学科：{sorted(unknown)}")
+    if plan is not None:
+        prefixes = plan.subjects
+        selected = [subject for subject in selected if subject in prefixes]
+    if progress is not None:
+        progress.restore(dict(term=term, subjects=sorted(selected),
+                              requested=None if subjects is None else sorted({
+                                  s.strip().upper() for s in subjects}),
+                              plan=plan.metadata() if plan else None))
+    courses = []
+    for subject in selected:
+        if progress is not None and subject in progress.batches:
+            courses.extend(progress.batches[subject])
+            if on_status:
+                on_status(f"{subject}  已从断点恢复")
+            continue
+        if on_status:
+            on_status(f"查询学科 {subject}（{len(selected)} 个学科）")
+        batch = read_subject(subject)
+        validate_catalog(dict(schema_version=SCHEMA_VERSION, term=term, subjects=[subject], offerings=batch))
+        if plan:
+            batch = [plan.annotate(c) for c in batch]
+        if progress is not None:
+            progress.commit(subject, batch)
+        courses.extend(batch)
+        if on_status:
+            on_status(f"{subject}  {len(batch)} 门课程，{sum(len(c['sections']) for c in batch)} 个教学班")
     report = dict(schema_version=SCHEMA_VERSION, source="CUHK(SZ) SIS · 课程搜索", term=term, term_label=term_label,
                   subjects=selected, offerings=courses)
     validate_catalog(report)
@@ -364,11 +376,13 @@ def _fetch_catalog(page: Page, term: str, subjects: Sequence[str] | None,
 
 def export_catalog(output: str | Path, *, profile: Profile | str | Path | None = None,
                    term: str | None = None, subjects: Sequence[str] | None = None,
-                   browser_file: str | Path | None = None,
+                   backend: str = "http", browser_file: str | Path | None = None,
                    plan: StudyPlan | None = None, restart: bool = False,
                    on_status: Callable[[str], None] | None = None) -> dict:
     """Read all requested subjects and atomically save their offerings."""
     term = term or current_term()
+    if backend not in {"http", "browser"}:
+        raise ScheduleError("backend 支持 http 或 browser。")
     profile = Profile.load(profile)
     plan = plan or profile_plan(profile)
     browser = Browser.load(browser_file)
@@ -390,21 +404,34 @@ def export_catalog(output: str | Path, *, profile: Profile | str | Path | None =
         if restart:
             progress.path.unlink(missing_ok=True)
         with sync_playwright() as pw:
-            with export_session(launch_context(pw.chromium, browser)) as context:
-                for attempt in range(2):
-                    page = _open_component(context, browser.headless, browser.login_timeout_ms, notify,
-                                           url=_SEARCH, portal_url=_SEARCH.replace("/psc/", "/psp/"),
-                                           ready=_frame, menu=re.compile("^课程搜索$"), name="课程搜索",
-                                           profile=profile)
+            if backend == "http":
+                from .http_catalog import read_catalog
+                from .http_session import read_protected
+
+                def read(component):
+                    guest = pw.request.new_context(extra_http_headers={"Accept-Language": "en-US,en;q=0.9"})
                     try:
-                        report = _fetch_catalog(page, term, subjects, notify, plan, progress)
-                        break
-                    except LoginRequired:
-                        if attempt or (browser.headless and not profile.username):
-                            raise
-                        notify("课程搜索会话已失效，重新登录后将从断点继续。")
+                        return read_catalog(component, guest, term, subjects, notify, plan, progress)
                     finally:
-                        close_page(page)
+                        guest.dispose()
+
+                report = read_protected(pw, browser, profile, notify, read)
+            else:
+                with export_session(launch_context(pw.chromium, browser)) as context:
+                    for attempt in range(2):
+                        page = _open_component(context, browser.headless, browser.login_timeout_ms, notify,
+                                               url=_SEARCH, portal_url=_SEARCH.replace("/psc/", "/psp/"),
+                                               ready=_frame, menu=re.compile("^课程搜索$"), name="课程搜索",
+                                               profile=profile)
+                        try:
+                            report = _fetch_catalog(page, term, subjects, notify, plan, progress)
+                            break
+                        except LoginRequired:
+                            if attempt or (browser.headless and not profile.username):
+                                raise
+                            notify("课程搜索会话已失效，重新登录后将从断点继续。")
+                        finally:
+                            close_page(page)
         save_courses(report, output)
         progress.path.unlink(missing_ok=True)
         return report
