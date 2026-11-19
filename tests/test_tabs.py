@@ -7,9 +7,9 @@ from unittest.mock import patch
 
 from playwright.sync_api import sync_playwright
 
-from sis_scrawler import LoginRequired, Profile, schedule
-from sis_scrawler.config import Browser
-from sis_scrawler.tabs import launch_context
+from cuhksz_sis_scraper import LoginRequired, Profile, schedule
+from cuhksz_sis_scraper.config import Browser
+from cuhksz_sis_scraper.tabs import launch_context
 
 
 class TabTests(unittest.TestCase):
@@ -46,6 +46,47 @@ class TabTests(unittest.TestCase):
                     self.assertNotEqual(context.pages[0].url, "data:text/plain,query")
                 finally:
                     context.close()
+
+    def test_exports_retire_restored_sis_and_untracked_tabs_across_sessions(self):
+        from cuhksz_sis_scraper import catalog
+
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            config = root / "browser.toml"
+            config.write_text('profile_dir="session"\nheadless=true\n' + (
+                f'channel="{os.environ["SIS_TEST_CHANNEL"]}"' if os.getenv("SIS_TEST_CHANNEL") else ""))
+            settings = Browser.load(config)
+            unrelated = "data:text/plain,unrelated"
+            with sync_playwright() as pw:
+                ctx = launch_context(pw.chromium, settings)
+                ctx.route("https://sis.cuhk.edu.cn/**", lambda route: route.fulfill(body="SIS fixture"))
+                ctx.pages[0].goto(unrelated)
+                for url in (catalog._SEARCH, catalog._DIRECTORY, schedule.SCHEDULE_URL):
+                    ctx.new_page().goto(url)
+                ctx.add_cookies([dict(name="test_session", value="ok", url=catalog._SEARCH)])
+                ctx.close()
+
+            def opened(ctx, *args, **kwargs):
+                ctx.new_page().goto("data:text/plain,detached")
+                return ctx.new_page()
+
+            # Each public export starts its own Playwright driver.
+            with patch.object(catalog, "_open_component", side_effect=opened), \
+                 patch.object(catalog, "_fetch_catalog", return_value={"offerings": []}):
+                catalog.export_catalog(root / "catalog.json", term="2620", profile=Profile(),
+                                       browser_file=config)
+            with patch.object(schedule, "_open_schedule", side_effect=opened), \
+                 patch.object(schedule, "fetch_courses", side_effect=RuntimeError("interrupted")), \
+                 self.assertRaisesRegex(RuntimeError, "interrupted"):
+                schedule.export_courses(root / "schedule.json", profile=Profile(), browser_file=config)
+
+            with sync_playwright() as inspect:
+                ctx = launch_context(inspect.chromium, settings)
+                try:
+                    self.assertEqual([p.url for p in ctx.pages], [unrelated])
+                    self.assertIn("test_session", {c["name"] for c in ctx.cookies()})
+                finally:
+                    ctx.close()
 
     def test_borrowed_schedule_closes_nested_popups_on_interrupt(self):
         with sync_playwright() as pw:

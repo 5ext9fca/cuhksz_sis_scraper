@@ -135,7 +135,7 @@ wheels = [
 ]
 
 [[package]]
-name = "sis-scrawler"
+name = "cuhksz-sis-scraper"
 version = "0.1.0"
 source = { editable = "." }
 dependencies = [

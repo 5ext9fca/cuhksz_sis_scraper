@@ -6,8 +6,8 @@ from tempfile import TemporaryDirectory
 import unittest
 from unittest.mock import patch
 
-from sis_scrawler import ScheduleError
-from sis_scrawler.calendar import current_term, update_calendar, _INDEX
+from cuhksz_sis_scraper import ScheduleError
+from cuhksz_sis_scraper.calendar import current_term, update_calendar, _INDEX
 
 
 def calendar_page():
@@ -32,7 +32,7 @@ class CalendarTests(unittest.TestCase):
         pages = {_INDEX: b'<a href="/en/page/next">Academic Calendar 2027-28 (Tentative)</a>',
                  self.source: calendar_page()}
         self.pages = pages
-        mocked = patch("sis_scrawler.calendar.download", side_effect=pages.__getitem__)
+        mocked = patch("cuhksz_sis_scraper.calendar.download", side_effect=pages.__getitem__)
         self.download = mocked.start()
         self.addCleanup(mocked.stop)
 

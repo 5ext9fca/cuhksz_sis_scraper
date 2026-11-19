@@ -1,6 +1,7 @@
 """Scope scraper-created tabs and popups to the query that opened them."""
 from collections.abc import Iterator
 from contextlib import ExitStack, contextmanager
+from urllib.parse import parse_qs, urlsplit
 
 from playwright.sync_api import BrowserContext, BrowserType, Error as PlaywrightError, Page
 
@@ -52,6 +53,44 @@ def query_popups(page: Page) -> Iterator[None]:
     with QueryTabs() as tabs:
         tabs.watch(page)
         yield
+
+
+def _restored_query(url: str) -> bool:
+    location = urlsplit(url)
+    if location.hostname != "sis.cuhk.edu.cn":
+        return False
+    component = location.path.rsplit("/", 1)[-1]
+    if component in {"SA_LEARNER_SERVICES.CLASS_SEARCH.GBL",
+                     "SA_LEARNER_SERVICES.SSR_SSENRL_LIST.GBL",
+                     "ESTABLISH_COURSES.SSS_BROWSE_CATLG.GBL"}:
+        return True
+    return (component == "WEBLIB_PTPP_SC.HOMEPAGE.FieldFormula.IScript_AppHP"
+            and parse_qs(location.query).get("pt_fname") in (
+                ["HCCC_ENROLLMENT"], ["HCSR_COURSE_CATALOG"]))
+
+
+@contextmanager
+def export_session(context: BrowserContext) -> Iterator[BrowserContext]:
+    """Clean a scraper-launched profile before Chromium saves its next session."""
+    original = context.pages
+    try:
+        yield context
+    finally:
+        try:
+            # Restored pages have no opener or ownership callbacks in this driver.
+            # Keep unrelated restored tabs and at most one neutral startup tab.
+            neutral = {"about:blank", "chrome://newtab/", "chrome://new-tab-page/", "edge://newtab/"}
+            keep = {page for page in original if not page.is_closed()
+                    and page.url not in neutral and not _restored_query(page.url)}
+            if not keep:
+                blank = next((page for page in original if not page.is_closed() and page.url in neutral), None)
+                # Closing Chromium's last tab can terminate the persistent context.
+                keep.add(blank or context.new_page())
+            for page in context.pages:
+                if page not in keep:
+                    close_page(page)
+        finally:
+            context.close()
 
 
 def launch_context(chromium: BrowserType, browser: Browser) -> BrowserContext:

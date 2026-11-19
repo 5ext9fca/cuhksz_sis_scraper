@@ -11,6 +11,7 @@ from urllib.parse import urljoin, urlsplit
 from bs4 import BeautifulSoup
 
 from .config import Profile
+from .models import validate_catalog
 from .login import ScheduleError
 from .web import download as _download
 
@@ -30,9 +31,9 @@ class StudyPlan:
     evidence: dict[str, list[dict]] = field(default_factory=dict, compare=False, hash=False)
     revision: str = ""
 
-    def annotate(self, course: dict) -> dict:
-        code = "".join(course["course_code"].upper().split())
-        return {**course, "plan_matches": self.evidence.get(code, [])}
+    def annotate(self, offering: dict) -> dict:
+        code = "".join(offering["course"]["course_code"].upper().split())
+        return {**offering, "plan_matches": self.evidence.get(code, [])}
 
     def matches(self, code: str) -> bool:
         return "".join(code.upper().split()) in self.codes
@@ -279,6 +280,7 @@ def profile_plan(profile: Profile, *, major: str | None = None, source: str | No
 
 def filter_catalog(report: dict, plan: StudyPlan, subjects: list[str] | None = None) -> dict:
     """Apply the same exact course-code filter to an existing SIS catalog."""
+    validate_catalog(report)
     selected = list(report["subjects"])
     if subjects is not None:
         requested = {s.strip().upper() for s in subjects}
@@ -287,6 +289,6 @@ def filter_catalog(report: dict, plan: StudyPlan, subjects: list[str] | None = N
         selected = [s for s in selected if s in requested]
     prefixes = plan.subjects
     selected = [s for s in selected if s in prefixes]
-    courses = [plan.annotate(c) for c in report["courses"] if c["course_code"].split()[0] in selected
-               and plan.matches(c["course_code"])]
-    return {**report, "subjects": selected, "courses": courses, "study_plan": plan.metadata()}
+    courses = [plan.annotate(c) for c in report["offerings"] if c["course"]["course_code"].split()[0] in selected
+               and plan.matches(c["course"]["course_code"])]
+    return {**report, "subjects": selected, "offerings": courses, "study_plan": plan.metadata()}

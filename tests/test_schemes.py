@@ -1,12 +1,13 @@
 """Regression checks for real study-scheme notation and cohort selection."""
+from dataclasses import asdict
 from pathlib import Path
 from tempfile import TemporaryDirectory
 from unittest import TestCase
 from unittest.mock import patch
 import subprocess
 
-from sis_scrawler import ScheduleError, StudyPlan, filter_catalog, load_study_plan
-from sis_scrawler.schemes import _attachment, _pdf_plan
+from cuhksz_sis_scraper import Course, parse_requirements, ScheduleError, StudyPlan, filter_catalog, load_study_plan
+from cuhksz_sis_scraper.schemes import _attachment, _pdf_plan
 
 
 class SchemeTests(TestCase):
@@ -29,7 +30,7 @@ Recommended Course Pattern
 CSC9999
 """
         completed = subprocess.CompletedProcess([], 0, stdout=text.encode())
-        with patch("sis_scrawler.schemes.subprocess.run", return_value=completed):
+        with patch("cuhksz_sis_scraper.schemes.subprocess.run", return_value=completed):
             plan = _pdf_plan(b"%PDF-test", "test.pdf", "", None, "Computer Engineering")
             with self.assertRaises(ScheduleError):
                 _pdf_plan(b"%PDF-test", "test.pdf", "", None, "unknown")
@@ -41,7 +42,7 @@ CSC9999
         html = "".join(f'<div class="list-content"><a href="/{key}.pdf"></a>'
                        f'<div class="list-title">适用于{year}入学学生</div></div>'
                        for key, year in rows)
-        with patch("sis_scrawler.schemes._download", return_value=html.encode()):
+        with patch("cuhksz_sis_scraper.schemes._download", return_value=html.encode()):
             for year, expected in [(2023, "old"), (2027, "new"), (None, "new")]:
                 self.assertEqual(_attachment("https://example.test/page", year)[1],
                                  f"https://example.test/{expected}.pdf")
@@ -55,16 +56,16 @@ CSC9999
                             '"乙":{"其他":{"ECO2011":"C"}}}', encoding="utf-8")
             plan = load_study_plan("甲", source=path)
         self.assertEqual(plan.codes, {"CSC1005", "MAT1011H"})
-        courses = [dict(course_code=code, sections=[{"session": "正常"}])
+        courses = [dict(course=asdict(Course(code, "示例", parse_requirements(""))), sections=[])
                    for code in ["CSC 1005", "CSC 1006", "MAT 1011H", "MAT 1011", "ECO 2011"]]
-        report = {"term": "2610", "subjects": ["CSC", "MAT", "ECO"], "courses": courses}
-        self.assertEqual(filter_catalog(report, plan)["courses"],
+        report = {"schema_version": 2, "term": "2610", "subjects": ["CSC", "MAT", "ECO"], "offerings": courses}
+        self.assertEqual(filter_catalog(report, plan)["offerings"],
                          [plan.annotate(courses[0]), plan.annotate(courses[2])])
         self.assertEqual(plan.evidence["MAT1011H"], [{"requirement": "选修",
                                                      "path": ["甲", "选修", "专业组", "MAT1011H"]}])
-        self.assertEqual(filter_catalog(report, plan, ["MAT"])["courses"], [plan.annotate(courses[2])])
+        self.assertEqual(filter_catalog(report, plan, ["MAT"])["offerings"], [plan.annotate(courses[2])])
         self.assertEqual(filter_catalog(report, plan, ["ECO"])["subjects"], [])
-        self.assertEqual(len(report["courses"]), 5)
+        self.assertEqual(len(report["offerings"]), 5)
 
     def test_evidence_tracks_shared_courses_abbreviations_and_note_across_pages(self):
         text = """Programme Title
@@ -87,7 +88,7 @@ Explanatory Note:
 [a] Students can choose to take either MAT1001 or
 \fMAT1011 to fulfill the graduation requirement."""
         completed = subprocess.CompletedProcess([], 0, stdout=text.encode())
-        with patch("sis_scrawler.schemes.subprocess.run", return_value=completed):
+        with patch("cuhksz_sis_scraper.schemes.subprocess.run", return_value=completed):
             plan = _pdf_plan(b"%PDF-test", "test.pdf", "", None, None)
             ce = _pdf_plan(b"%PDF-test", "test.pdf", "", None, "Computer Engineering")
         self.assertEqual(plan.evidence["PHY2001"], [

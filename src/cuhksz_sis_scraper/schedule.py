@@ -1,6 +1,7 @@
 """Read course records from the Simplified Chinese CUHK(SZ) SIS schedule."""
 from __future__ import annotations
 
+from dataclasses import asdict
 import json
 import re
 import sys
@@ -15,8 +16,9 @@ from playwright.sync_api import (
     TimeoutError as PlaywrightTimeout, sync_playwright,
 )
 
+from .models import Meeting, Section, SCHEMA_VERSION
 from .config import Browser, Profile
-from .tabs import QueryTabs, close_page, launch_context, query_popups
+from .tabs import QueryTabs, close_page, export_session, launch_context, query_popups
 from .login import LoginRequired, ScheduleError, SchoolLogin
 
 SIS_HOME = "https://sis.cuhk.edu.cn/"
@@ -141,8 +143,8 @@ def _course(group: dict) -> dict:
         if len(row) >= 7:
             number, section, component = row[:3]
             if number:
-                sections.append(dict(class_number=number, section=section,
-                                     component=component, meetings=[]))
+                sections.append(Section.from_sis(class_number=number, section=section,
+                                                 component=component, meetings=[]))
             elif section or component:
                 raise ScheduleError(f"{code} 的班别缺少课程号码。")
             fields = row[3:7]
@@ -152,14 +154,11 @@ def _course(group: dict) -> dict:
             raise ScheduleError(f"{code} 的排课行列数异常。")
         if not sections:
             raise ScheduleError(f"{code} 的时段缺少所属班别。")
-        sections[-1]["meetings"].append(dict(zip(
-            ("days_and_times", "room", "instructor", "date_range"),
-            (field or None for field in fields),
-        )))
+        sections[-1].meetings.append(Meeting(*(field or None for field in fields)))
     value = float(units)
     return dict(course_code=code, title=name, status=status,
                 units=int(value) if value.is_integer() else value,
-                grading_basis=basis, grade=grade or None, sections=sections)
+                grading_basis=basis, grade=grade or None, sections=[asdict(s) for s in sections])
 
 
 def _read_term(frame: Frame, term: str, career: str, institution: str) -> list[dict]:
@@ -212,7 +211,7 @@ def fetch_courses(page: Page, *, academic_career: str = "Undergraduate",
         if not page.is_closed() and _login_screen(page):
             raise LoginRequired("读取学期时 SIS 会话已失效，请手动登录后重新导出。") from exc
         raise
-    return {"source": "CUHK(SZ) SIS · 我的课程表", "academic_career": academic_career,
+    return {"schema_version": SCHEMA_VERSION, "source": "CUHK(SZ) SIS · 我的课程表", "academic_career": academic_career,
             "terms": records}
 
 
@@ -361,8 +360,7 @@ def export_courses(output: str | Path, *, profile: Profile | str | Path | None =
     browser = Browser.load(browser_file)
     notify = on_status if on_status is not None else lambda message: print(message, file=sys.stderr)
     with sync_playwright() as pw:
-        context = launch_context(pw.chromium, browser)
-        try:
+        with export_session(launch_context(pw.chromium, browser)) as context:
             for attempt in range(2):
                 page = _open_schedule(context, browser.headless, browser.login_timeout_ms, notify, profile)
                 try:
@@ -375,7 +373,5 @@ def export_courses(output: str | Path, *, profile: Profile | str | Path | None =
                     notify("导出途中会话失效，将在重新登录后从第一个学期开始。")
                 finally:
                     close_page(page)
-        finally:
-            context.close()
     save_courses(report, output)
     return report

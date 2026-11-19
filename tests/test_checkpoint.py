@@ -1,13 +1,14 @@
 """Reject incompatible scopes or incomplete subject checkpoints."""
 import json
+from dataclasses import asdict
 from pathlib import Path
 from tempfile import TemporaryDirectory
 import unittest
 
 from filelock import FileLock
 
-from sis_scrawler import Profile, ScheduleError, export_catalog
-from sis_scrawler.checkpoint import CatalogProgress
+from cuhksz_sis_scraper import Course, parse_requirements, Profile, ScheduleError, export_catalog
+from cuhksz_sis_scraper.checkpoint import CatalogProgress
 
 
 class CheckpointTests(unittest.TestCase):
@@ -28,6 +29,15 @@ class CheckpointTests(unittest.TestCase):
             with self.subTest(change=change), self.assertRaisesRegex(ScheduleError, "--restart"):
                 resumed.restore({**self.scope, **change})
         self.assertFalse(self.output.exists())
+
+    def test_previous_format_requires_restart(self):
+        self.progress.restore(self.scope)
+        self.progress.commit("BIO", [])
+        data = json.loads(self.progress.path.read_text())
+        data["version"] = 3
+        self.progress.path.write_text(json.dumps(data))
+        with self.assertRaisesRegex(ScheduleError, "--restart"):
+            self.progress.restore(self.scope)
 
     def test_damaged_checkpoint_cannot_publish(self):
         self.progress.restore(self.scope)
@@ -51,7 +61,7 @@ class CheckpointTests(unittest.TestCase):
     def test_interrupted_export_and_reauthentication(self):
         from unittest.mock import MagicMock, patch
         from contextlib import ExitStack
-        from sis_scrawler import catalog, LoginRequired
+        from cuhksz_sis_scraper import catalog, LoginRequired
 
         page = MagicMock()
         frame = MagicMock()
@@ -62,9 +72,8 @@ class CheckpointTests(unittest.TestCase):
         term.evaluate_all.return_value = ["BIO", "ECE"]
         kwargs = dict(term="2620", profile=Profile(username="test", password="test"))
         def batch(frame, label, subject, plan):
-            return [dict(course_code=subject + " 1001",
-                         sections=[dict(class_number=subject + "1", status="关闭",
-                                        meetings=[{"room": "101"}])])]
+            return [dict(course=asdict(Course(subject + " 1001", "示例", parse_requirements(""))),
+                         sections=[])]
 
         self.output.write_text('{"previous":true}')
         with ExitStack() as stack:

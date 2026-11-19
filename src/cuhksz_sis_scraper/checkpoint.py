@@ -24,8 +24,8 @@ class CatalogProgress:
             return
         try:
             data = json.loads(self.path.read_bytes())
-            if data["version"] != 1 or data["scope"] != scope:
-                raise ScheduleError("断点的学期、查询范围或修读计划版本不同。"
+            if data["version"] != 4 or data["scope"] != scope:
+                raise ScheduleError("断点格式、学期、查询范围或修读计划版本不同。"
                                     "请换用其他输出路径，或用 --restart 重新抓取。")
             batches = data["batches"]
             if (not isinstance(batches, dict) or not set(batches) <= set(scope["subjects"])
@@ -37,5 +37,5 @@ class CatalogProgress:
 
     def commit(self, subject: str, courses: list[dict]) -> None:
         self.batches[subject] = courses
-        save_courses(dict(version=1, scope=self.scope, batches=self.batches,
+        save_courses(dict(version=4, scope=self.scope, batches=self.batches,
                           checksum=_digest(self.batches)), self.path)

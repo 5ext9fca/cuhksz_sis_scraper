@@ -72,13 +72,13 @@ def catalog_main() -> None:
             if args.from_catalog.resolve() == output.resolve():
                 parser.error("筛选输出须与输入目录使用不同文件")
             data = json.loads(args.from_catalog.read_text(encoding="utf-8"))
-            if args.term and args.term != data["term"]:
-                parser.error("输入目录的学期与 --term 不一致")
             report = filter_catalog(data, plan, args.subject)
+            if args.term and args.term != report["term"]:
+                parser.error("输入目录的学期与 --term 不一致")
             save_courses(report, output)
         else:
             report = export_catalog(output, profile=profile, browser_file=args.browser_config,
                                     term=args.term, subjects=args.subject, plan=plan, restart=args.restart)
     except (ScheduleError, PlaywrightError, OSError, ValueError) as exc:
         parser.exit(1, f"导出失败：{exc}\n")
-    print(f"{report['term_label']}  {len(report['courses'])} 门课程  {output.resolve()}")
+    print(f"{report['term_label']}  {len(report['offerings'])} 门课程  {output.resolve()}")

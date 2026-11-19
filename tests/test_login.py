@@ -5,8 +5,8 @@ from unittest.mock import patch
 
 from playwright.sync_api import sync_playwright
 
-from sis_scrawler import LoginRequired, Profile
-from sis_scrawler import schedule
+from cuhksz_sis_scraper import LoginRequired, Profile
+from cuhksz_sis_scraper import schedule
 
 
 TERM_LIST = '<p>选择学期，然后单击继续。</p><input type="radio" aria-label="选择此行">'

@@ -3,8 +3,8 @@ import os
 import unittest
 
 from playwright.sync_api import sync_playwright
-from sis_scrawler import Profile, ScheduleError, fetch_catalog
-from sis_scrawler.catalog import _SEARCH, _sections
+from cuhksz_sis_scraper import Profile, ScheduleError, fetch_catalog
+from cuhksz_sis_scraper.catalog import _DIRECTORY, _SEARCH, _link_tutorials, _sections
 
 
 def grid(counter, rows, action=""):
@@ -55,6 +55,36 @@ class CatalogTests(unittest.TestCase):
         self.assertEqual([s["status"] for s in sections], ["开放", "关闭", "等候列表"])
         self.assertEqual(sections[-1]["session"], "正常")
         self.assertEqual(sections[-1]["meetings"][0]["instructor"], "Lee")
+
+    def test_lecture_tutorial_choices_are_scoped_and_paginated(self):
+        def action(field, label):
+            return (f'<a id="{field}" href="#" onclick="fetch(location.href,'
+                    "{method:'POST'}).then(r=>r.text()).then(s=>document.body.innerHTML=s);"
+                    f'return false">{label}</a>')
+
+        numbers = [101, 102, 103, 201, 202, 203]
+        listing = grid("1-6/6", [(n, "开放") for n in numbers],
+                       action("CLASS_SRCH_WRK2_SSR_PB_SELECT$101", "选择课程")
+                       + action("CLASS_SRCH_WRK2_SSR_PB_SELECT$102", "选择课程"))
+        for n in numbers[3:]:
+            listing = listing.replace(f"L01-LEC({n})", f"T{n - 200:02}-TUT({n})")
+
+        def preview(count, options, more=False):
+            rows = "".join(f'<tr><td id="SSR_CLS_TBL_R1_RELATE_CLASS_NBR${i}">{n}</td></tr>'
+                           for i, n in enumerate(options))
+            paging = action("SSR_CLS_TBL_R1$fviewall$0", "查看所有区段") if more else ""
+            return ('<div>选择 指导教学 区段 (必需):<div><table id="SSR_CLS_TBL_R1$scroll$0">'
+                    + rows + f'<tr><td class="PSGRIDCOUNTER">{count}</td><td>{paging}</td></tr>'
+                    + '</table></div></div>' + action("DERIVED_CLS_DTL_CANCEL_PB", "取消"))
+
+        frame = self.page_with(listing, preview("1/1", [203]), listing,
+                               preview("1/2", [201], True), preview("1-2/2", [201, 202]), listing)
+        sections = _sections(frame, "0")
+        _link_tutorials(frame, "0", sections)
+        self.assertEqual([s["tutorial_selection"] for s in sections[:3]], [
+            dict(status="known", min_select=1, max_select=1, class_numbers=["203"]),
+            dict(status="known", min_select=1, max_select=1, class_numbers=["201", "202"]), {"status": "unknown"}])
+        self.assertNotIn("tutorial_selection", sections[3])
 
     def test_duplicate_section_or_short_page_fails(self):
         for rows in [[(101, "开放"), (101, "开放")], [(101, "关闭")]]:
@@ -110,6 +140,20 @@ class CatalogTests(unittest.TestCase):
                     body = ""
             route.fulfill(content_type="text/html; charset=utf-8", body=body)
 
+        click = ("onclick=\"fetch(location.href,{method:'POST'}).then(r=>r.text()).then("
+                 "s=>document.body.innerHTML=s);return false\"")
+        listing = ('<h1>浏览课程目录</h1>'
+                   '<span id="DERIVED_SSS_BCC_GROUP_BOX_1$147$$span$1">ACT - Accounting</span>'
+                   '<table><tr id="trCOURSE_LIST$1_row1"><td>'
+                   '<span id="CRSE_NBR$span$0">2111</span></td><td>'
+                   f'<a href="#" id="CRSE_TITLE$0" {click}>Accounting</a></td></tr></table>')
+        detail = ('<span id="DERIVED_CRSECAT_DESCR200">ACT 2111 - Accounting</span>'
+                  '<div id="DERIVED_CRSECAT_DESCR254A$0">Prerequisite: A or B<br>'
+                  'Co-requisite: C (or instructor approval)</div>'
+                  f'<a href="#" id="DERIVED_SAA_CRS_RETURN_PB" {click}>返回 浏览课程目录</a>')
+        entries = iter([listing, detail, listing])
+        context.route(_DIRECTORY, lambda route: route.fulfill(content_type="text/html; charset=utf-8",
+                                                              body=next(entries)))
         page.route(_SEARCH, respond)
         page.goto(_SEARCH)
         report = fetch_catalog(page, term="2610", subjects=["act", "ACT"], profile=Profile())
@@ -119,4 +163,6 @@ class CatalogTests(unittest.TestCase):
         self.assertTrue(popups[0].is_closed())
         self.assertEqual(context.pages, [page, other])
         self.assertEqual(report["subjects"], ["ACT"])
-        self.assertEqual(report["courses"][0]["sections"][0]["class_number"], "101")
+        self.assertEqual(report["offerings"][0]["sections"][0]["class_number"], "101")
+        self.assertEqual(report["offerings"][0]["course"]["enrollment_requirements"]["raw_text"],
+                         "Prerequisite: A or B\nCo-requisite: C (or instructor approval)")

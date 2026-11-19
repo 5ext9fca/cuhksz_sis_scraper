@@ -1,4 +1,4 @@
-# sis_scrawler 用户指南
+# cuhksz_sis_scraper 用户指南
 
 用 `sis-export` 从港中大（深圳）SIS 导出个人各学期的课程记录，用 `sis-catalog` 查询某个学期的开课、教学班和上课时间。两个命令都将结果保存为 JSON。
 
@@ -33,13 +33,35 @@ uv run sis-catalog --term 2610 --subject ACT --subject CSC -o act-csc.json
 
 自动选学期时，程序通过系统 `curl` 从教务处发现已发布的校历，缓存超过 7 天后会重新查询。网络不可用时使用已有缓存或内置日期。运行 `uv run sis-catalog --update-calendar` 可立即更新。项目目录下的 `.sis-calendar.json` 记录各学年的官网来源、更新时间和学期起止日期。
 
-输出默认写入 `catalog.json`。`subjects` 列出已查询的学科，包括返回零门课程的学科。`courses[].sections` 包含班号、区段、期次（`session`）、状态和排课（`meetings`）。查询包含开放、关闭和候补班。个人课表和开课目录都在整次导出成功后才替换目标文件。
+输出默认写入 `catalog.json`。开课目录与个人课表均使用 `schema_version: 2`。请重新导出旧目录后再使用 `--from-catalog`。个人课表和开课目录都在整次导出成功后才替换目标文件。
+
+### 开课目录的数据模型
+
+一份目录对应一个 `term`。`subjects` 包含本次查询的学科，`offerings` 列出实际开课。每个条目有两个部分：
+
+- `course` 保存 `course_code`、`title` 和课程目录 Entry 的 `enrollment_requirements`。
+- `sections` 保存本学期的教学班，包括开放、关闭和候补班。每班都有 `class_number`、`section`、`kind`、SIS 原始 `component`、`session`、`status` 和 `meetings`。用学期和班号共同标识一个班，`kind` 可取 `lecture`、`tutorial` 或 `other`。
+
+`enrollment_requirements.raw_text` 保存 SIS「注册必修课程」原文。`prerequisite`、`corequisite`、`exclusion` 分别记录先修、同修和排除条件。单门课表示为 `{"course_code": "ACT 2111"}`，组合条件用可嵌套的 `all_of` 和 `any_of`。含审批、成绩等自由文本的子句以 `text` 保留。`parse_status` 为 `parsed` 表示整段已解析，`partial` 需结合原文判断，`empty` 表示目录栏为空，`unavailable` 表示未查到课程。
+
+只有 lecture 带 `tutorial_selection`。例如 `{"status": "known", "min_select": 1, "max_select": 1, "class_numbers": ["2339"]}` 表示必须选班号 2339。多个班号可在同一开课的 `sections` 中查找。已知没有 tutorial 时上下限均为 0，列表为空；未知配对为 `{"status": "unknown"}`。个人课表沿用同一组教学班模型，lecture 的可选配对为未知，课表页面没有提供的班级状态和期次为 `null`。
+
+Python 中可从导出结果读取类型化模型：
+
+```python
+from cuhksz_sis_scraper import CourseOffering, Lecture
+
+offering = CourseOffering.from_record(catalog["offerings"][0], term=catalog["term"])
+for section in offering.sections:
+    if isinstance(section, Lecture):
+        print(section.class_number, section.tutorial_selection)
+```
 
 ### 中断后继续导出
 
 实时查询目录时，每个学科完整读完后都会保存进度。例如输出为 `catalog.json` 时，进度保存在同目录的 `catalog.json.progress.json`。中断后重新运行原命令即可继续。已完成的学科保留上次读取时的班级状态，部分读取的学科会重新查询。全部学科完成并写出结果后，进度文件会自动清除。
 
-学期、学科范围或修读计划版本发生变化时，请指定新的输出路径。如需刷新已读取的班级状态或放弃旧进度，可对原命令加 `--restart`。Python 调用 `export_catalog(..., restart=True)` 的效果相同。
+使用旧版断点时，请加 `--restart` 重新查询。学期、学科范围或修读计划版本发生变化时，请指定新的输出路径。如需刷新已读取的班级状态或放弃旧进度，可对原命令加 `--restart`。Python 调用 `export_catalog(..., restart=True)` 的效果相同。
 
 ## 按专业修读计划筛选
 
@@ -65,7 +87,7 @@ uv run sis-catalog --from-catalog catalog.json --scheme ../major_schemes.json \
 
 `--scheme` 接受教务处的计划附件列表页、PDF 直链、本地 PDF 或本地计划 JSON。使用计划 JSON 时，`--major` 填写文件内的专业或方向名称。本地目录搭配本地计划可离线筛选。
 
-专业筛选默认输出 `catalog-major.json`。`study_plan` 记录计划来源、版本、所选方向和匹配课号。每门课的 `plan_matches` 列出纳入依据，包含要求类别、适用方向和 PDF 页码（从第一页起计）。例如查看 `courses[0]["plan_matches"]` 即可定位第一门课的原文。同一课号可有多条依据。使用本地计划 JSON 时，`path` 指向原文件中的条目。完整计划的逐课依据位于 `study_plan.course_evidence`。匹配范围包括计划列明的学院课、必修课、选修课和明确允许的等效选项。涉及学分组合、先修条件或个别审批时，请以原修读计划和 SIS 选课要求为准。
+专业筛选默认输出 `catalog-major.json`。`study_plan` 记录计划来源、版本、所选方向和匹配课号。每门课的 `plan_matches` 列出纳入依据，包含要求类别、适用方向和 PDF 页码（从第一页起计）。例如查看 `offerings[0]["plan_matches"]` 即可定位第一门课的原文。同一课号可有多条依据。使用本地计划 JSON 时，`path` 指向原文件中的条目。完整计划的逐课依据位于 `study_plan.course_evidence`。匹配范围包括计划列明的学院课、必修课、选修课和明确允许的等效选项。涉及学分组合、先修条件或个别审批时，请以原修读计划和 SIS 选课要求为准。
 
 ## 用户与浏览器配置
 
@@ -108,7 +130,7 @@ login_timeout = 180
 `export_courses` 和 `export_catalog` 负责打开浏览器、写入文件，并返回同一份数据。两者均接受可选的 `profile="path/to/profile.toml"` 和 `browser_file="path/to/browser.toml"` 参数。显式传给 `export_catalog` 的 `plan` 优先于个人专业。
 
 ```python
-from sis_scrawler import export_catalog, export_courses
+from cuhksz_sis_scraper import export_catalog, export_courses
 
 schedule = export_courses("../completed.json")
 catalog = export_catalog("ece.json", term="2620")

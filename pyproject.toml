@@ -1,5 +1,5 @@
 [project]
-name = "sis-scrawler"
+name = "cuhksz-sis-scraper"
 version = "0.1.0"
 description = "Export CUHK(SZ) SIS course schedules with Playwright"
 readme = "README.md"
@@ -14,8 +14,8 @@ dependencies = [
 ]
 
 [project.scripts]
-sis-export = "sis_scrawler.cli:main"
-sis-catalog = "sis_scrawler.cli:catalog_main"
+sis-export = "cuhksz_sis_scraper.cli:main"
+sis-catalog = "cuhksz_sis_scraper.cli:catalog_main"
 
 [build-system]
 requires = ["uv_build>=0.11.8,<0.12.0"]
