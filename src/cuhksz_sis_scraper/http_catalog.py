@@ -57,7 +57,11 @@ def section_rows(grid):
         table = required(grid, f'[id="SSR_CLSRCH_MTG1$scroll{suffix}"]')
         meetings = [[cell.get_text(" ", strip=True) or None for cell in tr.find_all(["td", "th"], recursive=False)]
                     for tr in table.select("tr")[1:]]
-        rows.append(_section(dict(label=anchor.get_text(strip=True), meetings=meetings,
+        counts = {}
+        for key, prefix in (("enrolled", "TOT"), ("capacity", "CAP")):
+            node = grid.find(id=f"SSR_CLS_DTL_WRK_ENRL_{prefix}{suffix}")
+            counts[key] = node.get_text(strip=True) if node else None
+        rows.append(_section(dict(**counts, label=anchor.get_text(strip=True), meetings=meetings,
                                   session=required(grid, f'[id="PSXLATITEM_XLATSHORTNAME{suffix}"]').get_text(strip=True),
                                   status=required(grid, f'[id="win0divDERIVED_CLSRCH_SSR_STATUS_LONG{suffix}"] img').get("alt"))))
     return rows
@@ -184,7 +188,8 @@ def read_catalog(component, guest, term, subjects, notify, plan, progress):
             for offering in batch:
                 course = offering["course"]
                 if course["course_code"] in by_code:
-                    course["enrollment_requirements"] = by_code[course["course_code"]]["enrollment_requirements"]
+                    detail = by_code[course["course_code"]]
+                    course.update({k: detail[k] for k in ("units", "units_raw", "enrollment_requirements")})
         return batch
 
     return _collect(term, subjects, notify, plan, progress, label, available, read_subject)

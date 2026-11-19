@@ -14,6 +14,7 @@ dependencies = [
 ]
 
 [project.scripts]
+sis-term-info = "cuhksz_sis_scraper.cli:term_info_main"
 sis-export = "cuhksz_sis_scraper.cli:main"
 sis-catalog = "cuhksz_sis_scraper.cli:catalog_main"
 

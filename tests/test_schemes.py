@@ -58,7 +58,7 @@ CSC9999
         self.assertEqual(plan.codes, {"CSC1005", "MAT1011H"})
         courses = [dict(course=asdict(Course(code, "示例", parse_requirements(""))), sections=[])
                    for code in ["CSC 1005", "CSC 1006", "MAT 1011H", "MAT 1011", "ECO 2011"]]
-        report = {"schema_version": 2, "term": "2610", "subjects": ["CSC", "MAT", "ECO"], "offerings": courses}
+        report = {"schema_version": 3, "term": "2610", "subjects": ["CSC", "MAT", "ECO"], "offerings": courses}
         self.assertEqual(filter_catalog(report, plan)["offerings"],
                          [plan.annotate(courses[0]), plan.annotate(courses[2])])
         self.assertEqual(plan.evidence["MAT1011H"], [{"requirement": "选修",

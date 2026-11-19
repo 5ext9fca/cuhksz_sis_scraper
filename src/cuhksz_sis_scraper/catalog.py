@@ -10,6 +10,7 @@ from filelock import FileLock, Timeout as LockTimeout
 from playwright.sync_api import Error as PlaywrightError, Frame, Locator, Page, sync_playwright
 
 from .models import Course, Meeting, Section, TutorialSelection, SCHEMA_VERSION, validate_catalog
+from .directory import unit_fields
 from .requirements import parse_requirements
 from .tabs import close_page, export_session, launch_context, query_popups
 from .config import Browser, Profile
@@ -40,6 +41,8 @@ _READ_SECTIONS = """grid => Array.from(
         const meetings = field('SSR_CLSRCH_MTG1$scroll');
         return {
             label: link.innerText.trim(),
+            enrolled: field('SSR_CLS_DTL_WRK_ENRL_TOT')?.innerText.trim(),
+            capacity: field('SSR_CLS_DTL_WRK_ENRL_CAP')?.innerText.trim(),
             session: field('PSXLATITEM_XLATSHORTNAME')?.innerText.trim(),
             status: field('win0divDERIVED_CLSRCH_SSR_STATUS_LONG')?.querySelector('img')?.alt,
             meetings: meetings && Array.from(meetings.rows).slice(1).map(row =>
@@ -86,9 +89,13 @@ def _section(row: dict) -> dict:
     if meetings is None or any(len(values) != 4 for values in meetings):
         raise ScheduleError(f"教学班 {label[2]} 的排课列有变化。")
     section = label[1].strip()
+    counts = {}
+    for key in ("enrolled", "capacity"):
+        value = row.get(key)
+        counts[key] = int(value) if value and value.isdecimal() else None
     return asdict(Section.from_sis(class_number=label[2], section=section,
                                    component=section.rsplit("-", 1)[-1], session=row["session"],
-                                   status=row["status"], meetings=[Meeting(*values) for values in meetings]))
+                                   **counts, status=row["status"], meetings=[Meeting(*values) for values in meetings]))
 
 
 def _page_range(count: str) -> tuple[int, int, int]:
@@ -228,6 +235,8 @@ def _read_course_entries(page: Page, subject: str, courses: list[dict]) -> None:
             heading = frame.locator("#DERIVED_CRSECAT_DESCR200").inner_text().partition(" - ")[0]
             if heading.split() != course["course_code"].split():
                 raise ScheduleError(f"课程目录详情与 {course['course_code']} 不符：{heading}")
+            unit = frame.locator('[id^="DERIVED_CRSECAT_UNITS_RANGE$"]')
+            course.update(unit_fields(unit.first.inner_text() if unit.count() else None))
             fields = frame.locator('[id^="DERIVED_CRSECAT_DESCR254A$"]:visible')
             parts = dict.fromkeys(text.strip() for text in fields.all_inner_texts() if text.strip())
             course["enrollment_requirements"] = asdict(parse_requirements("\n".join(parts)))

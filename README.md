@@ -75,3 +75,13 @@ HTTP 会话保存在 `profile_dir/http/` 下，按个人配置文件路径和账
 项目自带的 `browser.toml` 默认使用有窗口的 Google Chrome，并将登录会话保存在 `.sis-profile/`。需要后台运行时设 `headless = true`，并准备有效会话或在个人配置中填写登录凭据。若使用 Playwright 的 Chromium，先运行 `uv run playwright install chromium`，再从配置中移除 `channel` 行。使用 `--browser-config 路径` 可指定另一份浏览器配置。
 
 更多选项见 `uv run sis-export --help` 和 `uv run sis-catalog --help`。
+
+## 注册资格、班额和学期信息
+
+目录与个人课表使用 JSON v3。更新后请重新导出，已有目录断点请使用 `--restart` 重建。只接受 v2 的规划器需要同步升级后才能导入。
+
+目录的 `course.units` 是固定学分，`units_raw` 保留 SIS 学分原文（含浮动范围）。教学班的 `enrolled`、`capacity` 是读取时的已选人数和容量。未知数值为 null，实际零值为 0。课程的 `enrollment_requirements.restrictions` 保留年级、专业限制及条款原文；`parse_status: partial` 表示应核对完整原文。
+
+目录与课表的每条 meeting 均保留时间和日期原文，提供 `weekdays`（周一至周日为 1–7）、`start_minutes`、`end_minutes`（从午夜起算）和 ISO 格式的 `start_date`、`end_date`。时间待定时保留该行。
+
+运行 `uv run sis-term-info --term 2620` 可独立导出个人选课窗口、学分上下限与考试安排，默认文件为 `term-info-2620.json`。支持 `-o`、`--profile`、`--backend browser` 和 `--browser-config`。Python 可调用 `export_term_info(output, term="2620")` 或 `fetch_term_info(page, term="2620")`。学期报告使用独立的版本 1。窗口和考试分别标记 available（有记录）、empty（已显示空表）、unavailable（该学期或该项未提供）。解析失败时保留原输出。

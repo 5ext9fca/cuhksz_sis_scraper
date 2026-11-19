@@ -60,7 +60,7 @@ class ConfigTests(unittest.TestCase):
         Path("browser.toml").write_text("invalid browser config is never used offline")
         Path("plans.json").write_text('{"甲":{"必修":{"CSC1001":"A"}}}')
         Path("catalog.json").write_text(json.dumps({
-            "schema_version": 2, "term": "2620", "term_label": "第二学期", "subjects": ["CSC"],
+            "schema_version": 3, "term": "2620", "term_label": "第二学期", "subjects": ["CSC"],
             "offerings": [dict(course=asdict(Course(code, "示例", parse_requirements(""))), sections=[])
                           for code in ("CSC 1001", "CSC 1002")]}))
         argv = ["sis-catalog", "--scheme", "plans.json", "--from-catalog", "catalog.json",

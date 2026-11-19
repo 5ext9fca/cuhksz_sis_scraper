@@ -5,17 +5,10 @@ from dataclasses import dataclass, field
 from typing import Literal
 
 from .login import ScheduleError
+from .meeting import Meeting
 from .requirements import EnrollmentRequirements
 
-SCHEMA_VERSION = 2
-
-
-@dataclass
-class Meeting:
-    days_and_times: str | None
-    room: str | None
-    instructor: str | None
-    date_range: str | None
+SCHEMA_VERSION = 3
 
 
 @dataclass
@@ -26,6 +19,8 @@ class Section:
     meetings: list[Meeting]
     session: str | None = None
     status: str | None = None
+    enrolled: int | None = None
+    capacity: int | None = None
     kind: str = field(default="other", init=False)
 
     @classmethod
@@ -37,9 +32,13 @@ class Section:
     @classmethod
     def from_record(cls, record: dict) -> Section:
         fields = dict(record)
+        for key in ("enrolled", "capacity"):
+            count = fields[key]
+            if count is not None and (type(count) is not int or count < 0):
+                raise ValueError(f"无效的教学班人数 {key}。")
         kind = fields.pop("kind")
         section_type = {"lecture": Lecture, "tutorial": Tutorial, "other": Section}[kind]
-        fields["meetings"] = [Meeting(**m) for m in fields["meetings"]]
+        fields["meetings"] = [Meeting.from_record(m) for m in fields["meetings"]]
         if section_type is Lecture:
             selection = fields["tutorial_selection"]
             if selection == {"status": "unknown"}:
@@ -84,6 +83,8 @@ class Course:
     course_code: str
     title: str
     enrollment_requirements: EnrollmentRequirements
+    units: float | None = None
+    units_raw: str | None = None
 
 
 @dataclass
@@ -97,7 +98,12 @@ class CourseOffering:
     def from_record(cls, record: dict, *, term: str) -> CourseOffering:
         fields = dict(record)
         data = dict(fields.pop("course"))
-        data["enrollment_requirements"] = EnrollmentRequirements(**data["enrollment_requirements"])
+        if not {"units", "units_raw"} <= data.keys():
+            raise ValueError("缺少课程学分字段。")
+        requirements = data["enrollment_requirements"]
+        if not isinstance(requirements["restrictions"], list):
+            raise ValueError("无效的注册限制。")
+        data["enrollment_requirements"] = EnrollmentRequirements(**requirements)
         sections = [Section.from_record(s) for s in fields.pop("sections")]
         return cls(term, Course(**data), sections, **fields)
 

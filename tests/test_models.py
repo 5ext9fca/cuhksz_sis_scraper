@@ -32,7 +32,7 @@ class ModelTests(unittest.TestCase):
         tutorial = Tutorial("203", "T03-TUT", "TUT", [])
         record = dict(course=asdict(Course("ACT 2111", "Accounting", parse_requirements(""))),
                       sections=[asdict(lecture), asdict(tutorial)])
-        report = dict(schema_version=2, term="2620", subjects=["ACT"], offerings=[record])
+        report = dict(schema_version=3, term="2620", subjects=["ACT"], offerings=[record])
         validate_catalog(report)
         offering = CourseOffering.from_record(record, term="2620")
         self.assertEqual(offering.sections, [lecture, tutorial])
@@ -54,7 +54,7 @@ class ModelTests(unittest.TestCase):
         self.assertEqual(sections[2].component, "实验室")
 
     def test_old_catalog_rejected(self):
-        for report in [{"courses": []}, {"schema_version": 1, "courses": []},
-                       {"schema_version": 2, "courses": [], "term": "2620", "subjects": []}]:
+        for report in [{"courses": []}, {"schema_version": 2, "courses": []},
+                       {"schema_version": 3, "courses": [], "term": "2620", "subjects": []}]:
             with self.subTest(report=report), self.assertRaisesRegex(ScheduleError, "重新导出"):
                 validate_catalog(report)

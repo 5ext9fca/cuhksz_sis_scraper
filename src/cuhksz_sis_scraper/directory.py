@@ -41,6 +41,11 @@ def field_text(soup, prefix):
     return "\n".join(parts)
 
 
+def unit_fields(raw):
+    raw = raw.strip() if raw else None
+    return dict(units_raw=raw, units=float(raw) if raw and re.fullmatch(r"\d+(?:\.\d+)?", raw) else None)
+
+
 def read_directory(initial_html, action, targets, limit, *, allow_missing=False):
     soup = initial_html if isinstance(initial_html, Tag) else BeautifulSoup(initial_html, "html.parser")
     timings = []
@@ -92,7 +97,7 @@ def read_directory(initial_html, action, targets, limit, *, allow_missing=False)
             if " ".join(code.split()) != expected or not separator or not title:
                 raise ValueError(f"Expected course detail for {expected}")
             requirements = field_text(detail, "DERIVED_CRSECAT_DESCR254A")
-            records.append(dict(course_code=expected, title=title,
+            records.append(dict(**unit_fields(field_text(detail, "DERIVED_CRSECAT_UNITS_RANGE")), course_code=expected, title=title,
                                 description=field_text(detail, "SSR_CRSE_OFF_VW_DESCRLONG"),
                                 enrollment_requirements=asdict(parse_requirements(requirements))))
             soup = navigate("DERIVED_SAA_CRS_RETURN_PB")

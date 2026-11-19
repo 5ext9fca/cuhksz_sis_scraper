@@ -34,7 +34,7 @@ class CheckpointTests(unittest.TestCase):
         self.progress.restore(self.scope)
         self.progress.commit("BIO", [])
         data = json.loads(self.progress.path.read_text())
-        data["version"] = 3
+        data["version"] = 4
         self.progress.path.write_text(json.dumps(data))
         with self.assertRaisesRegex(ScheduleError, "--restart"):
             self.progress.restore(self.scope)

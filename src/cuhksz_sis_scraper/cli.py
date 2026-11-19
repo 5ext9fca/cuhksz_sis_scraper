@@ -83,3 +83,18 @@ def catalog_main() -> None:
     except (ScheduleError, PlaywrightError, OSError, ValueError) as exc:
         parser.exit(1, f"导出失败：{exc}\n")
     print(f"{report['term_label']}  {len(report['offerings'])} 门课程  {output.resolve()}")
+
+
+def term_info_main() -> None:
+    from .term_info import export_term_info
+    parser = argparse.ArgumentParser(description="导出个人学期选课窗口、学分限制和考试安排")
+    parser.add_argument("--term", required=True)
+    parser.add_argument("-o", "--output", type=Path)
+    _config_options(parser)
+    args = parser.parse_args()
+    output = args.output or Path(f"term-info-{args.term}.json")
+    try:
+        export_term_info(output, term=args.term, profile=args.profile, browser_file=args.browser_config, backend=args.backend)
+    except (PlaywrightError, ScheduleError, OSError) as exc:
+        parser.exit(1, f"导出失败：{exc}\n")
+    print(output.resolve())

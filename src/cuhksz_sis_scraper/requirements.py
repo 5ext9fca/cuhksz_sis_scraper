@@ -1,6 +1,13 @@
 """Parse the SIS enrollment requisite without discarding its original wording."""
 import re
-from dataclasses import dataclass
+from typing import TypedDict
+from dataclasses import dataclass, field
+
+
+class RegistrationRestriction(TypedDict):
+    raw_text: str
+    years: list[str]
+    programs: list[str]
 
 
 @dataclass
@@ -10,10 +17,11 @@ class EnrollmentRequirements:
     prerequisite: dict | None = None
     corequisite: dict | None = None
     exclusion: dict | None = None
+    restrictions: list[RegistrationRestriction] = field(default_factory=list)
 
 
 _LABEL = re.compile(
-    r"(?<!\w)(?:\d+[.)、]\s*)?(pre[- ]?requisites?|co[- ]?requisites?|exclusions?|"
+    r"(?<!\w)(?:\d+[.)、]\s*)?(pre[- ]?requisites?|co[- ]?requisites?|exclusions?|restrictions?|requires|专业限制|年级限制|"
     r"先修(?:课程|要求)?|同修(?:课程|要求)?|互斥(?:课程)?|排除(?:课程)?)\s*[:：]", re.I)
 _TOKEN = re.compile(r"[A-Z]{2,}\s*\d{4}[A-Z]*|\band\b|\bor\b|[()]|及|且|或", re.I)
 
@@ -62,18 +70,50 @@ def _expression(text: str) -> dict:
     return {"text": text}
 
 
+def parse_restriction(clause: str) -> RegistrationRestriction | None:
+    body = re.sub(r"^for\s*:?\s+", "", clause, flags=re.I)
+    body = re.sub(r"\s+(?:students?(?: only)?|only)$", "", body, flags=re.I).strip()
+    match = re.fullmatch(r"(?:Y([1-9])(?:\s*[-–]\s*Y?([1-9]))?)?\s*(?:\(([^()]+)\)|([A-Z][A-Z_ /-]*))?", body)
+    if not match or not body:
+        return None
+    first, last, grouped, plain = match.groups()
+    if first and last and int(last) < int(first):
+        return None
+    programs = re.split(r"\s*(?:[;,/]| or )\s*", grouped or plain or "")
+    if programs != [""] and any(not re.fullmatch(r"[A-Z]{2,}(?:[-_][A-Z]+)*", p) for p in programs):
+        return None
+    years = [f"Y{i}" for i in range(int(first), int(last or first) + 1)] if first else []
+    return dict(raw_text=clause, years=years, programs=[p for p in programs if p])
+
+
 def parse_requirements(raw: str | None) -> EnrollmentRequirements:
     if not raw:
         return EnrollmentRequirements(raw, "empty" if raw == "" else "unavailable")
     result = EnrollmentRequirements(raw, "partial")
     labels = list(_LABEL.finditer(raw))
-    if not labels:
-        return result
-    complete = not raw[:labels[0].start()].strip()
+
+    def add_restrictions(text):
+        items = re.split(r"[;；,，](?![^()]*\))", text)
+        complete = True
+        for item in items:
+            item = item.strip()
+            restriction = parse_restriction(item)
+            result.restrictions.append(restriction or dict(raw_text=item, years=[], programs=[]))
+            complete = complete and restriction is not None
+        return complete
+
+    prefix = raw[:labels[0].start()] if labels else raw
+    prefix = prefix.strip().rstrip(".。;；").strip()
+    complete = not prefix
+    if prefix and (re.match(r"for\s|Y[1-9]\b", prefix, re.I) or parse_restriction(prefix)):
+        complete = add_restrictions(prefix)
     for i, label in enumerate(labels):
         end = labels[i + 1].start() if i + 1 < len(labels) else len(raw)
         clause = raw[label.end():end].strip().rstrip(";；.。").strip()
         name = label[1].lower()
+        if name in {"restriction", "restrictions", "requires", "专业限制", "年级限制"}:
+            complete = add_restrictions(clause) and complete
+            continue
         key = ("prerequisite" if name.startswith(("pre", "先")) else
                "corequisite" if name.startswith(("co", "同")) else "exclusion")
         if getattr(result, key) is not None:
