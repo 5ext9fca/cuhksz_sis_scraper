@@ -1,101 +1,18 @@
-# cuhksz_sis_scraper 用户指南
+# cuhksz_sis_scraper
 
-用 `sis-export` 从港中大（深圳）SIS 导出个人各学期的课程记录，用 `sis-catalog` 查询某个学期的开课、教学班和上课时间。两个命令都将结果保存为 JSON。
+从香港中文大学（深圳）SIS 导出个人课表和学期开课目录，保存为 JSON。`sis-export` 导出个人各学期的选课记录和成绩；`sis-catalog` 查询开课、上课时间、lecture 对应的 tutorial，以及先修和同修要求。
 
-## 首次使用
+## 推荐用法：配置 profile.toml
 
-准备 uv 和 Python 3.10 或更高版本。在项目目录运行以下命令，使用本机的 Google Chrome 导出个人课表：
+先安装 uv，准备 Python 3.10 或更高版本和 Google Chrome。在项目目录中运行：
 
 ```sh
 uv sync --locked
-uv run sis-export -o ../completed.json
+cp -n profile.example.toml profile.toml
+chmod 600 profile.toml
 ```
 
-如果学校要求认证，在打开的浏览器中选择「简体中文」并登录。导出结束后，可在上级目录打开 `completed.json`。下次运行会复用项目目录的 `.sis-profile/`。如果使用 Playwright 自带的 Chromium，先运行 `uv run playwright install chromium`，并在 `browser.toml` 中省略 `channel`。
-
-## 导出个人课表
-
-`sis-export` 默认导出本科生各学期的记录，包括已注册、已退课和候补课程。省略 `-o` 时写入当前目录的 `completed.json`。命令结束时会列出各学期的课程数和输出路径。
-
-在 JSON 的 `terms[].courses` 中可查看课程名称、状态、学分、评分方式和成绩。每门课的 `sections[].meetings` 保存班别及其排课。空成绩为 `null`，空学期的课程列表为 `[]`。
-
-## 按学期搜索开课及教学班
-
-```sh
-# 本学期全部学科和专业
-uv run sis-catalog --all-majors -o catalog.json
-
-# 2026–27 第一学期，仅查询会计与计算机科学
-uv run sis-catalog --term 2610 --subject ACT --subject CSC -o act-csc.json
-```
-
-默认按深圳当地日期选择学期，从教学首日算到期末考试最后一天，含首尾两天。学期间隔、下一学年校历尚未发布或查询其他学期时，用 `--term` 指定 SIS 学期代码。重复传入 `--subject` 可查询多个学科。
-
-自动选学期时，程序通过系统 `curl` 从教务处发现已发布的校历，缓存超过 7 天后会重新查询。网络不可用时使用已有缓存或内置日期。运行 `uv run sis-catalog --update-calendar` 可立即更新。项目目录下的 `.sis-calendar.json` 记录各学年的官网来源、更新时间和学期起止日期。
-
-输出默认写入 `catalog.json`。开课目录与个人课表均使用 `schema_version: 2`。请重新导出旧目录后再使用 `--from-catalog`。个人课表和开课目录都在整次导出成功后才替换目标文件。
-
-### 开课目录的数据模型
-
-一份目录对应一个 `term`。`subjects` 包含本次查询的学科，`offerings` 列出实际开课。每个条目有两个部分：
-
-- `course` 保存 `course_code`、`title` 和课程目录 Entry 的 `enrollment_requirements`。
-- `sections` 保存本学期的教学班，包括开放、关闭和候补班。每班都有 `class_number`、`section`、`kind`、SIS 原始 `component`、`session`、`status` 和 `meetings`。用学期和班号共同标识一个班，`kind` 可取 `lecture`、`tutorial` 或 `other`。
-
-`enrollment_requirements.raw_text` 保存 SIS「注册必修课程」原文。`prerequisite`、`corequisite`、`exclusion` 分别记录先修、同修和排除条件。单门课表示为 `{"course_code": "ACT 2111"}`，组合条件用可嵌套的 `all_of` 和 `any_of`。含审批、成绩等自由文本的子句以 `text` 保留。`parse_status` 为 `parsed` 表示整段已解析，`partial` 需结合原文判断，`empty` 表示目录栏为空，`unavailable` 表示未查到课程。
-
-只有 lecture 带 `tutorial_selection`。例如 `{"status": "known", "min_select": 1, "max_select": 1, "class_numbers": ["2339"]}` 表示必须选班号 2339。多个班号可在同一开课的 `sections` 中查找。已知没有 tutorial 时上下限均为 0，列表为空；未知配对为 `{"status": "unknown"}`。个人课表沿用同一组教学班模型，lecture 的可选配对为未知，课表页面没有提供的班级状态和期次为 `null`。
-
-Python 中可从导出结果读取类型化模型：
-
-```python
-from cuhksz_sis_scraper import CourseOffering, Lecture
-
-offering = CourseOffering.from_record(catalog["offerings"][0], term=catalog["term"])
-for section in offering.sections:
-    if isinstance(section, Lecture):
-        print(section.class_number, section.tutorial_selection)
-```
-
-### 中断后继续导出
-
-实时查询目录时，每个学科完整读完后都会保存进度。例如输出为 `catalog.json` 时，进度保存在同目录的 `catalog.json.progress.json`。中断后重新运行原命令即可继续。已完成的学科保留上次读取时的班级状态，部分读取的学科会重新查询。全部学科完成并写出结果后，进度文件会自动清除。
-
-使用旧版断点时，请加 `--restart` 重新查询。学期、学科范围或修读计划版本发生变化时，请指定新的输出路径。如需刷新已读取的班级状态或放弃旧进度，可对原命令加 `--restart`。Python 调用 `export_catalog(..., restart=True)` 的效果相同。
-
-## 按专业修读计划筛选
-
-先列出理工学院的本科专业，再用专业名查询。下载官网计划需要系统 `curl`，读取 PDF 需要 Poppler 的 `pdftotext`（macOS 可用 `brew install poppler`）。
-
-```sh
-uv run sis-catalog --list-majors
-uv run sis-catalog --major 电子与计算机工程 --cohort 2025 \
-  --stream "Computer Engineering" --term 2610 -o ece.json
-```
-
-`--cohort 2025` 选择 **2025–26 学年入学**的修读计划，`--term 2610` 选择 **2026–27 第一学期实际开设**的课程。省略 `--cohort` 时采用官网公布的最新入学版本。省略 `--stream` 时合并该专业各方向。指定方向时使用计划中的英文名称。可再传入 `--subject` 缩小查询范围。
-
-已有 `catalog.json` 时，加 `--from-catalog` 即可直接筛选该文件，免去再次登录 SIS。以下示例分别使用官网和本地的计划：
-
-```sh
-uv run sis-catalog --from-catalog catalog.json --major 电子与计算机工程 \
-  --cohort 2025 --stream "Computer Engineering" -o ece-web.json
-
-uv run sis-catalog --from-catalog catalog.json --scheme ../major_schemes.json \
-  --major 计算机工程 -o ece-local.json
-```
-
-`--scheme` 接受教务处的计划附件列表页、PDF 直链、本地 PDF 或本地计划 JSON。使用计划 JSON 时，`--major` 填写文件内的专业或方向名称。本地目录搭配本地计划可离线筛选。
-
-专业筛选默认输出 `catalog-major.json`。`study_plan` 记录计划来源、版本、所选方向和匹配课号。每门课的 `plan_matches` 列出纳入依据，包含要求类别、适用方向和 PDF 页码（从第一页起计）。例如查看 `offerings[0]["plan_matches"]` 即可定位第一门课的原文。同一课号可有多条依据。使用本地计划 JSON 时，`path` 指向原文件中的条目。完整计划的逐课依据位于 `study_plan.course_evidence`。匹配范围包括计划列明的学院课、必修课、选修课和明确允许的等效选项。涉及学分组合、先修条件或个别审批时，请以原修读计划和 SIS 选课要求为准。
-
-## 用户与浏览器配置
-
-命令和 Python 导出 API 默认从当前工作目录读取 `profile.toml` 与 `browser.toml`。目录筛选只读取用户配置。要指定其他路径，使用 `--profile 路径` 和 `--browser-config 路径`。
-
-### profile.toml
-
-首次使用可复制 `profile.example.toml` 为 `profile.toml`，并执行 `chmod 600 profile.toml`。该文件保存明文凭据，已列入 `.gitignore`。从旧版迁移时，将 `.sis-credentials.json` 的账号和密码填入对应字段。
+编辑 `profile.toml`。下面以 2025 年入学、选择 Computer Engineering 方向的电子与计算机工程学生为例：
 
 ```toml
 username = ""
@@ -105,35 +22,45 @@ cohort = 2025
 stream = "Computer Engineering"
 ```
 
-账号与密码同时填写可在会话失效时自动登录，同时留空则复用有效会话或在有窗口模式下手动登录。`major`、`cohort` 和 `stream` 均可省略。`cohort` 是入学年份，查询学期由 `--term` 或 Python 的 `term=` 指定，省略时按校历判断。
+- **登录**：账号密码一起留空时，程序优先复用已有会话。首次使用或登录过期时，在打开的学校页面选择「简体中文」并登录。需要自动登录时可同时填写两项；凭据以明文保存在本机，`profile.toml` 已加入 Git 忽略列表。
+- **专业**：填好 `major` 后，目录查询默认按该专业的修读计划筛选。运行 `uv run sis-catalog --list-majors` 可查看支持的理工学院专业名。专业官网查询使用系统 `curl`，读取计划 PDF 需要 Poppler 的 `pdftotext`（macOS 可用 `brew install poppler` 安装）。
+- **入学年份和方向**：`cohort` 决定使用哪一届的修读计划，省略时使用官网最新版本。`stream` 填计划中的英文方向名，省略时合并各方向。只导出个人课表时，可省略这三项专业设置。
 
-配置专业后，实时查询和 `--from-catalog` 均使用该专业筛选。可用 `--major`、`--cohort`、`--stream` 临时覆盖，或用 `--all-majors` 实时查询全部专业。指定本地 PDF 或 JSON 时，文件本身决定版本。
+保存后，在同一目录运行所需命令：
 
 ```sh
-# 使用示例中的个人专业，查询 2026–27 第二学期
-uv run sis-catalog --term 2620 -o ece-2620.json
+# 导出个人各学期的课表与成绩，写入 completed.json
+uv run sis-export
+
+# 按个人修读计划查询 2026–27 第二学期的开课
+uv run sis-catalog --term 2620 -o my-catalog-2620.json
 ```
 
-### browser.toml
+`--term` 指定查询开课的学期。省略时按深圳当地日期和学校校历选择本学期；在学期间隔可显式指定学期代码。两个命令均支持用 `-o` 指定输出文件，用 `--profile 路径` 选用另一份个人配置。
 
-```toml
-channel = "chrome"
-headless = false
-profile_dir = ".sis-profile"
-login_timeout = 180
+## 调整查询范围
+
+临时查询所有专业时使用 `--all-majors`。要进一步限定学科，可多次传入 `--subject`：
+
+```sh
+uv run sis-catalog --all-majors --term 2620 -o catalog-2620.json
+uv run sis-catalog --all-majors --term 2620 --subject ACT --subject CSC -o act-csc-2620.json
 ```
 
-`channel` 支持 `chrome`、`msedge`、`chromium`，省略时使用 Playwright 安装的 Chromium。`headless` 控制后台运行。后台登录需要有效会话或已配置的账号密码。`profile_dir` 是保存会话的浏览器目录，相对路径以浏览器配置文件所在目录为准。`login_timeout` 以秒为单位。原有的浏览器命令行选项和 `--credentials` 已迁移到这两个文件。
+已有完整目录时，可以直接按个人配置筛选，免去再次登录 SIS：
 
-## Python API
-
-`export_courses` 和 `export_catalog` 负责打开浏览器、写入文件，并返回同一份数据。两者均接受可选的 `profile="path/to/profile.toml"` 和 `browser_file="path/to/browser.toml"` 参数。显式传给 `export_catalog` 的 `plan` 优先于个人专业。
-
-```python
-from cuhksz_sis_scraper import export_catalog, export_courses
-
-schedule = export_courses("../completed.json")
-catalog = export_catalog("ece.json", term="2620")
+```sh
+uv run sis-catalog --from-catalog catalog-2620.json -o my-catalog-2620.json
 ```
 
-如果自行管理 Playwright 同步 `Page`，在简体中文「我的课程表」页调用 `fetch_courses(page)`，在「课程搜索」页调用 `fetch_catalog(page, plan=plan)`。可用 `filter_catalog(catalog, plan)` 筛选已有目录字典，用 `save_courses(report, path)` 将结果写入文件。需要人工认证时，调用方可捕获 `LoginRequired`。
+也可用 `--major`、`--cohort`、`--stream` 临时指定修读计划，或用 `--scheme` 读取本地计划 JSON、PDF 或官网计划链接。已有目录配合本地计划即可离线筛选。
+
+## 继续中断的导出
+
+实时查询目录时，每完成一个学科就保存一次进度。**重新运行原命令**即可从断点继续，全部完成后才替换输出文件。要从头刷新同一份目录，在原命令后加 `--restart`；要保留前一次进度并查询其他学期或范围，换一个输出路径。
+
+## 浏览器设置
+
+项目自带的 `browser.toml` 默认使用有窗口的 Google Chrome，并将登录会话保存在 `.sis-profile/`。需要后台运行时设 `headless = true`，并准备有效会话或在个人配置中填写登录凭据。若使用 Playwright 的 Chromium，先运行 `uv run playwright install chromium`，再从配置中移除 `channel` 行。使用 `--browser-config 路径` 可指定另一份浏览器配置。
+
+更多选项见 `uv run sis-export --help` 和 `uv run sis-catalog --help`。
