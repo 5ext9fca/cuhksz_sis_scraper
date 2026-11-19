@@ -135,7 +135,9 @@ class CatalogTests(unittest.TestCase):
                 data = route.request.post_data_json
                 if data["action"] == "search":
                     searches.append(data)
-                    body = result
+                    body = result.replace("ACT 2111", data["subject"] + " 2111")
+                    if data["subject"] == "CSC":
+                        body = body.replace("(101)", "(102)")
                 else:
                     body = ""
             route.fulfill(content_type="text/html; charset=utf-8", body=body)
@@ -151,18 +153,20 @@ class CatalogTests(unittest.TestCase):
                   '<div id="DERIVED_CRSECAT_DESCR254A$0">Prerequisite: A or B<br>'
                   'Co-requisite: C (or instructor approval)</div>'
                   f'<a href="#" id="DERIVED_SAA_CRS_RETURN_PB" {click}>返回 浏览课程目录</a>')
-        entries = iter([listing, detail, listing])
-        context.route(_DIRECTORY, lambda route: route.fulfill(content_type="text/html; charset=utf-8",
+        entries = iter([listing, detail, listing, listing.replace("ACT -", "CSC -"),
+                        detail.replace("ACT 2111", "CSC 2111"), listing.replace("ACT -", "CSC -")])
+        page.route(_DIRECTORY, lambda route: route.fulfill(content_type="text/html; charset=utf-8",
                                                               body=next(entries)))
         page.route(_SEARCH, respond)
         page.goto(_SEARCH)
-        report = fetch_catalog(page, term="2610", subjects=["act", "ACT"], profile=Profile())
-        self.assertEqual(searches, [dict(action="search", subject="ACT", term="2610",
-                                        comparison="G", number="0", open="false")])
-        self.assertEqual(len(popups), 1)
+        report = fetch_catalog(page, term="2610", subjects=["act", "ACT", "CSC"], profile=Profile())
+        self.assertEqual(searches, [dict(action="search", subject=subject, term="2610",
+                                        comparison="G", number="0", open="false") for subject in ("ACT","CSC")])
+        self.assertEqual(len(popups), 2)
         self.assertTrue(popups[0].is_closed())
         self.assertEqual(context.pages, [page, other])
-        self.assertEqual(report["subjects"], ["ACT"])
+        self.assertEqual(report["subjects"], ["ACT", "CSC"])
+        self.assertEqual(page.url, _SEARCH)
         self.assertEqual(report["offerings"][0]["sections"][0]["class_number"], "101")
         self.assertEqual(report["offerings"][0]["course"]["enrollment_requirements"]["raw_text"],
                          "Prerequisite: A or B\nCo-requisite: C (or instructor approval)")

@@ -83,6 +83,8 @@ class CheckpointTests(unittest.TestCase):
                     mock.return_value = False
             stack.enter_context(patch.object(catalog, "_open_component", return_value=page))
             stack.enter_context(patch.object(catalog, "_frame", return_value=frame))
+            page.main_frame = frame
+            stack.enter_context(patch.object(catalog, "_read_course_entries"))
             search = stack.enter_context(patch.object(catalog, "_search"))
             search.side_effect = [batch(None, None, "BIO", None), KeyboardInterrupt()]
             with self.assertRaises(KeyboardInterrupt):

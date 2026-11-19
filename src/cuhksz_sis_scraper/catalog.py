@@ -11,7 +11,7 @@ from playwright.sync_api import Error as PlaywrightError, Frame, Locator, Page, 
 
 from .models import Course, Meeting, Section, TutorialSelection, SCHEMA_VERSION, validate_catalog
 from .requirements import parse_requirements
-from .tabs import QueryTabs, close_page, export_session, launch_context, query_popups
+from .tabs import close_page, export_session, launch_context, query_popups
 from .config import Browser, Profile
 from .calendar import current_term
 from .checkpoint import CatalogProgress
@@ -195,45 +195,43 @@ def _link_tutorials(frame: Frame, group: str, sections: list[dict]) -> None:
 
 def _read_course_entries(page: Page, subject: str, courses: list[dict]) -> None:
     """Attach the verbatim enrollment requisite from the curriculum directory."""
-    with QueryTabs() as tabs:
-        directory = tabs.open(page.context)
-        directory.goto(_DIRECTORY, wait_until="domcontentloaded")
-        frame = directory.main_frame
-        try:
-            letter = frame.locator(f"#DERIVED_SSS_BCC_SSR_ALPHANUM_{subject[0]}")
-            labels = frame.locator('span[id^="DERIVED_SSS_BCC_GROUP_BOX_1"][id*="$span$"]')
-            subject_label = labels.filter(has_text=re.compile(r"^" + re.escape(subject) + r"\s*-"))
-            frame.get_by_text("浏览课程目录", exact=True).first.wait_for()
-            if not subject_label.count() and letter.is_visible():
-                _update(frame, letter.click, _DIRECTORY_PATH)
-            if not subject_label.count():
-                return
-            group = (subject_label.get_attribute("id") or "").rsplit("$", 1)[-1]
-            rows = frame.locator(f'tr[id^="trCOURSE_LIST${group}_row"]')
-            for offering in courses:
-                course = offering["course"]
-                if not rows.first.is_visible():
-                    expand = frame.locator(f'[id="DERIVED_SSS_BCC_SSR_EXPAND_COLLAPS${group}"]')
-                    _update(frame, expand.click, _DIRECTORY_PATH)
-                number = course["course_code"].split(maxsplit=1)[1]
-                number_cell = frame.locator('[id^="CRSE_NBR$span$"]').filter(
-                    has_text=re.compile(r"^\s*" + re.escape(number) + r"\s*$"))
-                link = rows.filter(has=number_cell).locator('a[id^="CRSE_TITLE$"]')
-                if not link.count():
-                    continue
-                _update(frame, link.click, _DIRECTORY_PATH)
-                heading = frame.locator("#DERIVED_CRSECAT_DESCR200").inner_text().partition(" - ")[0]
-                if heading.split() != course["course_code"].split():
-                    raise ScheduleError(f"课程目录详情与 {course['course_code']} 不符：{heading}")
-                fields = frame.locator('[id^="DERIVED_CRSECAT_DESCR254A$"]:visible')
-                parts = dict.fromkeys(text.strip() for text in fields.all_inner_texts() if text.strip())
-                course["enrollment_requirements"] = asdict(parse_requirements("\n".join(parts)))
-                _update(frame, frame.locator("#DERIVED_SAA_CRS_RETURN_PB").click, _DIRECTORY_PATH)
-                subject_label.wait_for()
-        except (PlaywrightError, ScheduleError) as exc:
-            if _login_screen(directory):
-                raise LoginRequired("课程目录会话已失效，请重新登录。") from exc
-            raise
+    page.goto(_DIRECTORY, wait_until="domcontentloaded")
+    frame = page.main_frame
+    try:
+        letter = frame.locator(f"#DERIVED_SSS_BCC_SSR_ALPHANUM_{subject[0]}")
+        labels = frame.locator('span[id^="DERIVED_SSS_BCC_GROUP_BOX_1"][id*="$span$"]')
+        subject_label = labels.filter(has_text=re.compile(r"^" + re.escape(subject) + r"\s*-"))
+        frame.get_by_text("浏览课程目录", exact=True).first.wait_for()
+        if not subject_label.count() and letter.is_visible():
+            _update(frame, letter.click, _DIRECTORY_PATH)
+        if not subject_label.count():
+            return
+        group = (subject_label.get_attribute("id") or "").rsplit("$", 1)[-1]
+        rows = frame.locator(f'tr[id^="trCOURSE_LIST${group}_row"]')
+        for offering in courses:
+            course = offering["course"]
+            if not rows.first.is_visible():
+                expand = frame.locator(f'[id="DERIVED_SSS_BCC_SSR_EXPAND_COLLAPS${group}"]')
+                _update(frame, expand.click, _DIRECTORY_PATH)
+            number = course["course_code"].split(maxsplit=1)[1]
+            number_cell = frame.locator('[id^="CRSE_NBR$span$"]').filter(
+                has_text=re.compile(r"^\s*" + re.escape(number) + r"\s*$"))
+            link = rows.filter(has=number_cell).locator('a[id^="CRSE_TITLE$"]')
+            if not link.count():
+                continue
+            _update(frame, link.click, _DIRECTORY_PATH)
+            heading = frame.locator("#DERIVED_CRSECAT_DESCR200").inner_text().partition(" - ")[0]
+            if heading.split() != course["course_code"].split():
+                raise ScheduleError(f"课程目录详情与 {course['course_code']} 不符：{heading}")
+            fields = frame.locator('[id^="DERIVED_CRSECAT_DESCR254A$"]:visible')
+            parts = dict.fromkeys(text.strip() for text in fields.all_inner_texts() if text.strip())
+            course["enrollment_requirements"] = asdict(parse_requirements("\n".join(parts)))
+            _update(frame, frame.locator("#DERIVED_SAA_CRS_RETURN_PB").click, _DIRECTORY_PATH)
+            subject_label.wait_for()
+    except (PlaywrightError, ScheduleError) as exc:
+        if _login_screen(page):
+            raise LoginRequired("课程目录会话已失效，请重新登录。") from exc
+        raise
 
 
 def _search(frame: Frame, term_label: str, subject: str, plan: StudyPlan | None = None) -> list[dict]:
@@ -272,8 +270,6 @@ def _search(frame: Frame, term_label: str, subject: str, plan: StudyPlan | None 
         _link_tutorials(frame, group, sections)
         course = Course(code, name, parse_requirements(None))
         courses.append(dict(course=asdict(course), sections=sections))
-    if courses:
-        _read_course_entries(frame.page, subject, courses)
     return courses
 
 
@@ -336,6 +332,14 @@ def _fetch_catalog(page: Page, term: str, subjects: Sequence[str] | None,
                     _update(frame, frame.locator(_NEW).click)
                 _select(frame, term_select, term)
                 batch = _search(frame, term_label, subject, plan)
+                if batch:
+                    _read_course_entries(page, subject, batch)
+                    # SIS invalidates the previous component on navigation. Obtain a
+                    # fresh search form even when the caller supplied a portal iframe.
+                    page.goto(_SEARCH, wait_until="domcontentloaded")
+                    frame = page.main_frame
+                    term_select = frame.locator(_TERM)
+                    term_select.wait_for()
             numbers = [s["class_number"] for c in batch for s in c["sections"]]
             if len(numbers) != len(set(numbers)):
                 raise ScheduleError(f"{subject} 搜索结果含重复班号。")
