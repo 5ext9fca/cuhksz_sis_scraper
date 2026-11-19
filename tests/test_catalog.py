@@ -111,7 +111,7 @@ class CatalogTests(unittest.TestCase):
               <option value="2520">旧学期</option><option value="2610">第一学期</option></select>
             <select id="SSR_CLSRCH_WRK_SUBJECT" onchange="post('subject')">
               <option value=""></option><option>ACT</option><option>CSC</option></select>
-            <select id="SSR_CLSRCH_WRK_SSR_EXACT_MATCH1"><option>G</option></select>
+            <select id="SSR_CLSRCH_WRK_SSR_EXACT_MATCH1"><option>G</option><option>E</option></select>
             <input type="text" id="SSR_CLSRCH_WRK_CATALOG_NBR">
             <input type="checkbox" id="SSR_CLSRCH_WRK_SSR_OPEN_ONLY" checked>
             <button id="CLASS_SRCH_WRK2_SSR_PB_CLEAR" onclick="post('clear')">清除</button>
@@ -170,3 +170,7 @@ class CatalogTests(unittest.TestCase):
         self.assertEqual(report["offerings"][0]["sections"][0]["class_number"], "101")
         self.assertEqual(report["offerings"][0]["course"]["enrollment_requirements"]["raw_text"],
                          "Prerequisite: A or B\nCo-requisite: C (or instructor approval)")
+        with self.assertRaisesRegex(ScheduleError, "精确查询"):
+            fetch_catalog(page, term="2610", course="act2111h", profile=Profile(major="专业外课程"))
+        self.assertEqual(searches[-1], dict(action="search", subject="ACT", term="2610",
+                                            comparison="E", number="2111H", open="false"))

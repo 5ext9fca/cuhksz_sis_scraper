@@ -248,10 +248,27 @@ def _read_course_entries(page: Page, subject: str, courses: list[dict]) -> None:
         raise
 
 
-def _search(frame: Frame, term_label: str, subject: str, plan: StudyPlan | None = None) -> list[dict]:
+def normalize_course(course: str) -> str:
+    match = re.fullmatch(r"([A-Z]+)\s*(\d{4}[A-Z]*)", course.strip().upper())
+    if not match:
+        raise ScheduleError("请提供完整课号，例如 CSC1001 或 MAT1011H。")
+    return " ".join(match.groups())
+
+
+def course_scope(course, subjects, plan):
+    if course is None:
+        return None, subjects
+    if subjects is not None or plan is not None:
+        raise ScheduleError("指定课号时不能同时指定学科或修读计划。")
+    code = normalize_course(course)
+    return code, [code.split()[0]]
+
+
+def _search(frame: Frame, term_label: str, subject: str, plan: StudyPlan | None = None,
+            course_code: str | None = None) -> list[dict]:
     _select(frame, frame.locator(_SUBJECT), subject)
-    frame.locator('select[id^="SSR_CLSRCH_WRK_SSR_EXACT_MATCH1"]').select_option("G")
-    frame.locator('input[id^="SSR_CLSRCH_WRK_CATALOG_NBR"]').fill("0")
+    frame.locator('select[id^="SSR_CLSRCH_WRK_SSR_EXACT_MATCH1"]').select_option("E" if course_code else "G")
+    frame.locator('input[id^="SSR_CLSRCH_WRK_CATALOG_NBR"]').fill(course_code.split()[1] if course_code else "0")
     frame.locator('input[type=checkbox][id^="SSR_CLSRCH_WRK_SSR_OPEN_ONLY"]').uncheck()
     _update(frame, frame.locator(_SUBMIT).click)
     confirm = frame.get_by_text(_LARGE)
@@ -277,6 +294,8 @@ def _search(frame: Frame, term_label: str, subject: str, plan: StudyPlan | None 
         code, sep, name = title.strip().partition(" - ")
         if not sep or not name or code.split()[:1] != [subject]:
             raise ScheduleError(f"{subject} 搜索结果有异常课程：{title}")
+        if course_code and normalize_course(code) != course_code:
+            raise ScheduleError(f"精确查询 {course_code} 返回了 {code}。")
         if plan is not None and not plan.matches(code):
             continue
         group = field_id.rsplit("$", 1)[1]
@@ -287,17 +306,19 @@ def _search(frame: Frame, term_label: str, subject: str, plan: StudyPlan | None 
     return courses
 
 
-def fetch_catalog(page: Page, *, term: str | None = None, subjects: Sequence[str] | None = None,
+def fetch_catalog(page: Page, *, course: str | None = None, term: str | None = None, subjects: Sequence[str] | None = None,
                   on_status: Callable[[str], None] | None = None, plan: StudyPlan | None = None,
                   profile: Profile | str | Path | None = None) -> dict:
     """Read term offerings from an authenticated Simplified Chinese class-search Page."""
-    plan = plan or profile_plan(Profile.load(profile))
-    return _fetch_catalog(page, term or current_term(), subjects, on_status, plan, None)
+    course, subjects = course_scope(course, subjects, plan)
+    if not course:
+        plan = plan or profile_plan(Profile.load(profile))
+    return _fetch_catalog(page, term or current_term(), subjects, on_status, plan, None, course)
 
 
 def _fetch_catalog(page: Page, term: str, subjects: Sequence[str] | None,
                    on_status: Callable[[str], None] | None, plan: StudyPlan | None,
-                   progress: CatalogProgress | None) -> dict:
+                   progress: CatalogProgress | None, course: str | None = None) -> dict:
     frame = _frame(page)
     if frame is None:
         if _login_screen(page):
@@ -323,7 +344,7 @@ def _fetch_catalog(page: Page, term: str, subjects: Sequence[str] | None,
                 if frame.locator(_NEW).is_visible():
                     _update(frame, frame.locator(_NEW).click)
                 _select(frame, term_select, term)
-                batch = _search(frame, term_label, subject, plan)
+                batch = _search(frame, term_label, subject, plan, course)
                 if batch:
                     _read_course_entries(page, subject, batch)
                     # SIS invalidates the previous component on navigation. Obtain a
@@ -383,7 +404,7 @@ def _collect(term, subjects, on_status, plan, progress, term_label, available, r
     return report
 
 
-def export_catalog(output: str | Path, *, profile: Profile | str | Path | None = None,
+def export_catalog(output: str | Path, *, course: str | None = None, profile: Profile | str | Path | None = None,
                    term: str | None = None, subjects: Sequence[str] | None = None,
                    backend: str = "http", browser_file: str | Path | None = None,
                    plan: StudyPlan | None = None, restart: bool = False,
@@ -393,7 +414,11 @@ def export_catalog(output: str | Path, *, profile: Profile | str | Path | None =
     if backend not in {"http", "browser"}:
         raise ScheduleError("backend 支持 http 或 browser。")
     profile = Profile.load(profile)
-    plan = plan or profile_plan(profile)
+    course, subjects = course_scope(course, subjects, plan)
+    if course and restart:
+        raise ScheduleError("单课实时查询不能使用 --restart。")
+    if not course:
+        plan = plan or profile_plan(profile)
     browser = Browser.load(browser_file)
 
     def notify(message: str) -> None:
@@ -412,37 +437,92 @@ def export_catalog(output: str | Path, *, profile: Profile | str | Path | None =
     try:
         if restart:
             progress.path.unlink(missing_ok=True)
-        with sync_playwright() as pw:
-            if backend == "http":
-                from .http_catalog import read_catalog
-                from .http_session import read_protected
+        active_progress = None if course else progress
 
-                def read(component):
-                    guest = pw.request.new_context(extra_http_headers={"Accept-Language": "en-US,en;q=0.9"})
-                    try:
-                        return read_catalog(component, guest, term, subjects, notify, plan, progress)
-                    finally:
-                        guest.dispose()
+        def read(pw, component):
+            from .http_catalog import read_catalog
 
-                report = read_protected(pw, browser, profile, notify, read)
-            else:
-                with export_session(launch_context(pw.chromium, browser)) as context:
-                    for attempt in range(2):
-                        page = _open_component(context, browser.headless, browser.login_timeout_ms, notify,
-                                               url=_SEARCH, portal_url=_SEARCH.replace("/psc/", "/psp/"),
-                                               ready=_frame, menu=re.compile("^课程搜索$"), name="课程搜索",
-                                               profile=profile)
-                        try:
-                            report = _fetch_catalog(page, term, subjects, notify, plan, progress)
-                            break
-                        except LoginRequired:
-                            if attempt or (browser.headless and not profile.username):
-                                raise
-                            notify("课程搜索会话已失效，重新登录后将从断点继续。")
-                        finally:
-                            close_page(page)
+            guest = pw.request.new_context(extra_http_headers={"Accept-Language": "en-US,en;q=0.9"})
+            try:
+                return read_catalog(component, guest, term, subjects, notify, plan, active_progress, course)
+            finally:
+                guest.dispose()
+
+        def browse(page):
+            return _fetch_catalog(page, term, subjects, notify, plan, active_progress, course)
+
+        report = _run_search_session(browser, profile, backend, notify, read, browse)
         save_courses(report, output)
-        progress.path.unlink(missing_ok=True)
+        if active_progress is not None:
+            progress.path.unlink(missing_ok=True)
         return report
     finally:
         lock.release()
+
+
+def _run_search_session(browser, profile, backend, notify, read, browse):
+    with sync_playwright() as pw:
+        if backend == "http":
+            from .http_session import read_protected
+
+            return read_protected(pw, browser, profile, notify, lambda c: read(pw, c))
+        with export_session(launch_context(pw.chromium, browser)) as context:
+            for attempt in range(2):
+                page = _open_component(context, browser.headless, browser.login_timeout_ms, notify,
+                                       url=_SEARCH, portal_url=_SEARCH.replace("/psc/", "/psp/"),
+                                       ready=_frame, menu=re.compile("^课程搜索$"), name="课程搜索",
+                                       profile=profile)
+                try:
+                    return browse(page)
+                except LoginRequired:
+                    if attempt or (browser.headless and not profile.username):
+                        raise
+                    notify("课程搜索会话已失效，重新登录后继续。")
+                finally:
+                    close_page(page)
+
+
+def _list_options(term, backend, browser_file, profile):
+    selector = _SUBJECT if term is not None else _TERM
+    if backend not in {"http", "browser"}:
+        raise ScheduleError("backend 支持 http 或 browser。")
+
+    def read(pw, component):
+        from .http_catalog import required, select
+        component.open(_SEARCH)
+        component.act("CLASS_SRCH_WRK2_SSR_PB_CLEAR")
+        if term is not None:
+            select(component, _TERM, term)
+        options = required(component.form, selector).select("option[value]")
+        return [(o["value"], o.get_text(strip=True)) for o in options if o["value"]]
+
+    def browse(page):
+        frame = _frame(page)
+        if frame is None:
+            raise LoginRequired("无法读取课程搜索表单。")
+        if frame.locator(_NEW).is_visible():
+            _update(frame, frame.locator(_NEW).click)
+        _update(frame, frame.locator("#CLASS_SRCH_WRK2_SSR_PB_CLEAR").click)
+        if term is not None:
+            control = frame.locator(_TERM)
+            if term not in control.locator("option").evaluate_all("opts => opts.map(o => o.value)"):
+                raise ScheduleError(f"SIS 未列出学期 {term}。")
+            _select(frame, control, term)
+        return [(code, label) for code, label in frame.locator(selector + " option[value]").evaluate_all(
+            "opts => opts.map(o => [o.value, o.text.trim()])") if code]
+
+    options = _run_search_session(Browser.load(browser_file), Profile.load(profile), backend,
+                                  lambda message: print(message, file=sys.stderr), read, browse)
+    if not options or any(not label for _, label in options):
+        raise ScheduleError("SIS 查询选项缺失或名称为空。")
+    return options
+
+
+def list_terms(*, backend="http", browser_file=None, profile=None) -> list[tuple[str, str]]:
+    """Return the term codes and labels currently offered by Class Search."""
+    return _list_options(None, backend, browser_file, profile)
+
+
+def list_subjects(term: str | None = None, *, backend="http", browser_file=None, profile=None) -> list[tuple[str, str]]:
+    """Return the subject dropdown for a selected SIS term in display order."""
+    return _list_options(term or current_term(), backend, browser_file, profile)

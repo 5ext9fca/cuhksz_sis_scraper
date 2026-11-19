@@ -85,3 +85,11 @@ HTTP 会话保存在 `profile_dir/http/` 下，按个人配置文件路径和账
 目录与课表的每条 meeting 均保留时间和日期原文，提供 `weekdays`（周一至周日为 1–7）、`start_minutes`、`end_minutes`（从午夜起算）和 ISO 格式的 `start_date`、`end_date`。时间待定时保留该行。
 
 运行 `uv run sis-term-info --term 2620` 可独立导出个人选课窗口、学分上下限与考试安排，默认文件为 `term-info-2620.json`。支持 `-o`、`--profile`、`--backend browser` 和 `--browser-config`。Python 可调用 `export_term_info(output, term="2620")` 或 `fetch_term_info(page, term="2620")`。学期报告使用独立的版本 1。窗口和考试分别标记 available（有记录）、empty（已显示空表）、unavailable（该学期或该项未提供）。解析失败时保留原输出。
+
+## 实时查一门课
+
+`uv run sis-catalog --list-terms` 列出 SIS 课程搜索页上的学期代码和名称。`uv run sis-catalog --term 2620 --list-subjects` 列出该学期可选的学科；具体开课情况以查询结果为准。
+
+`uv run sis-catalog --term 2620 --course CSC1001` 在终端显示各班的班号、班别、开放状态和已选人数／容量，并保存独立的 v3 目录 `catalog-2620-CSC1001.json`。可用 `-o` 指定文件。课号支持小写、空格和尾缀，例如 `--course "mat 1011h"`。每次都从 SIS 刷新，保留关闭和等候列表教学班；人数未知时显示“—”。SIS 明示查无结果时生成空目录。
+
+单课查询直接使用完整课号，profile 中的专业不会缩小结果范围。单课与学科列表省略学期时使用校历默认学期。三个命令均支持现有认证配置及 `--backend browser`。Python 可使用 `list_terms()`、`list_subjects(term)` 获取按页面顺序排列的代码和名称，或给 `export_catalog()`、`fetch_catalog()` 传入 `course="CSC1001"`。

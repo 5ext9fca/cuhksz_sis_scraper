@@ -3,7 +3,7 @@ from dataclasses import asdict
 import re
 
 from .catalog import (_collect, _DIRECTORY, _EMPTY, _ERROR, _HEADINGS, _LARGE, _merge_page, _page_range,
-                      _SEARCH, _section, _SUBJECT, _SUBMIT, _TERM)
+                      normalize_course, _SEARCH, _section, _SUBJECT, _SUBMIT, _TERM)
 from .directory import read_directory
 from .login import ScheduleError
 from .models import Course, TutorialSelection
@@ -127,11 +127,13 @@ def read_sections(component, code):
     return sections
 
 
-def search(component, term, subject, label, plan):
+def search(component, term, subject, label, plan, course=None):
     select(component, _TERM, term)
     select(component, _SUBJECT, subject)
     changes = {}
-    for prefix, value in [("SSR_CLSRCH_WRK_SSR_EXACT_MATCH1", "G"), ("SSR_CLSRCH_WRK_CATALOG_NBR", "0")]:
+    criteria = {"SSR_CLSRCH_WRK_SSR_EXACT_MATCH1": "E" if course else "G",
+                "SSR_CLSRCH_WRK_CATALOG_NBR": course.split()[1] if course else "0"}
+    for prefix, value in criteria.items():
         control = required(component.form, f'[id^="{prefix}"][name]')
         changes[control["name"]] = value
     checkbox = required(component.form, 'input[type=checkbox][id^="SSR_CLSRCH_WRK_SSR_OPEN_ONLY"]')
@@ -156,13 +158,15 @@ def search(component, term, subject, label, plan):
         code, sep, name = title.partition(" - ")
         if not sep or not name or code.split()[:1] != [subject]:
             raise ScheduleError("搜索结果课程与学科不符。")
+        if course and normalize_course(code) != course:
+            raise ScheduleError(f"精确查询 {course} 返回了 {code}。")
         if not plan or plan.matches(code):
             batch.append(dict(course=asdict(Course(code, name, parse_requirements(None))),
                               sections=read_sections(component, code)))
     return batch
 
 
-def read_catalog(component, guest, term, subjects, notify, plan, progress):
+def read_catalog(component, guest, term, subjects, notify, plan, progress, course=None):
     def open_search():
         component.open(_SEARCH)
         component.act("CLASS_SRCH_WRK2_SSR_PB_CLEAR")
@@ -177,7 +181,7 @@ def read_catalog(component, guest, term, subjects, notify, plan, progress):
         if not first:
             open_search()
         first = False
-        batch = search(component, term, subject, label, plan)
+        batch = search(component, term, subject, label, plan, course)
         if batch:
             directory = Component(guest)
             form = directory.open(_DIRECTORY)
@@ -186,10 +190,10 @@ def read_catalog(component, guest, term, subjects, notify, plan, progress):
                                         {subject: numbers}, None, allow_missing=True)
             by_code = {r["course_code"]: r for r in records}
             for offering in batch:
-                course = offering["course"]
-                if course["course_code"] in by_code:
-                    detail = by_code[course["course_code"]]
-                    course.update({k: detail[k] for k in ("units", "units_raw", "enrollment_requirements")})
+                record = offering["course"]
+                if record["course_code"] in by_code:
+                    detail = by_code[record["course_code"]]
+                    record.update({k: detail[k] for k in ("units", "units_raw", "enrollment_requirements")})
         return batch
 
     return _collect(term, subjects, notify, plan, progress, label, available, read_subject)

@@ -31,14 +31,18 @@ def main() -> None:
 
 
 def catalog_main() -> None:
-    from .calendar import CACHE, update_calendar
-    from .catalog import export_catalog
+    from .calendar import CACHE, current_term, update_calendar
+    from .catalog import export_catalog, list_terms, list_subjects, normalize_course
     from .schemes import list_majors, profile_plan, filter_catalog
     from .schedule import save_courses
 
     parser = argparse.ArgumentParser(description="按学期和学科导出 SIS 开课及教学班信息")
-    parser.add_argument("--update-calendar", action="store_true", help="从教务处更新本地学期日期并退出")
-    parser.add_argument("--list-majors", action="store_true", help="列出学院官网本科专业")
+    mode = parser.add_mutually_exclusive_group()
+    mode.add_argument("--course", help="实时精确查询完整课号，例如 CSC1001")
+    mode.add_argument("--list-terms", action="store_true", help="列出可查询的 SIS 学期")
+    mode.add_argument("--list-subjects", action="store_true", help="列出所选学期的学科")
+    mode.add_argument("--update-calendar", action="store_true", help="从教务处更新本地学期日期并退出")
+    mode.add_argument("--list-majors", action="store_true", help="列出学院官网本科专业")
     parser.add_argument("--major", help="学院官网专业名称，或计划 JSON 中的专业名")
     parser.add_argument("--scheme", help="指定教务处计划页、PDF 网址、本地 PDF 或本地计划 JSON")
     parser.add_argument("--cohort", type=int, help="入学学年的起始年，如 2025，默认最新公布版本")
@@ -51,6 +55,13 @@ def catalog_main() -> None:
     parser.add_argument("--all-majors", action="store_true", help="此次实时查询全部专业")
     _config_options(parser)
     args = parser.parse_args()
+    listing = args.list_terms or args.list_subjects
+    if listing or args.course is not None:
+        if any((args.subject, args.major, args.scheme, args.cohort is not None, args.stream,
+                args.from_catalog, args.all_majors, args.restart)):
+            parser.error("单课和列表查询不能与学科、修读计划、离线筛选或断点选项组合")
+        if (listing and args.output) or (args.list_terms and args.term):
+            parser.error("列表输出到终端，仅 --list-subjects 接受 --term")
     if args.all_majors and any((args.major, args.stream, args.cohort, args.scheme, args.from_catalog)):
         parser.error("--all-majors 与修读计划筛选选项不能同时使用")
     try:
@@ -60,6 +71,28 @@ def catalog_main() -> None:
             return
         if args.list_majors:
             print("\n".join(list_majors()))
+            return
+        connection = dict(backend=args.backend, browser_file=args.browser_config, profile=args.profile)
+        if listing:
+            options = list_terms(**connection) if args.list_terms else list_subjects(args.term, **connection)
+            for code, label in options:
+                print(f"{code}  {label}")
+            return
+        if args.course is not None:
+            course = normalize_course(args.course)
+            term = args.term or current_term()
+            if not (term.isascii() and term.isdecimal() and len(term) == 4):
+                parser.error("--term 需要四位 SIS 学期代码")
+            output = args.output or Path(f"catalog-{term}-{course.replace(' ', '')}.json")
+            report = export_catalog(output, term=term, course=course, **connection)
+            print(f"{report['term_label']}  {course}  {output.resolve()}")
+            if not report["offerings"]:
+                print("该学期未查到此课。")
+            for offering in report["offerings"]:
+                print("班号  班别  状态  已选／容量")
+                for section in offering["sections"]:
+                    counts = [str(section[k]) if section[k] is not None else "—" for k in ("enrolled", "capacity")]
+                    print(f"{section['class_number']}  {section['section']}  {section['status']}  {'／'.join(counts)}")
             return
         profile = Profile.load(args.profile)
         if args.all_majors:
