@@ -1,0 +1,8 @@
+# 复制为 profile.toml 后填写。留空账号和密码可使用已有会话或手动登录。
+username = ""
+password = ""
+
+# 去掉注释可默认按个人修读计划筛选课程目录。
+# major = "电子与计算机工程"
+# cohort = 2025
+# stream = "Computer Engineering"

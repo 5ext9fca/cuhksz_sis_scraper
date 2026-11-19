@@ -1,0 +1,4 @@
+channel = "chrome"
+headless = false
+profile_dir = ".sis-profile"
+login_timeout = 180  # 秒

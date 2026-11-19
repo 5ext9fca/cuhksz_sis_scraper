@@ -1,0 +1,12 @@
+.venv/
+.sis-profile/
+__pycache__/
+*.pyc
+.sis-credentials.json
+.sis-calendar.json
+.sis-calendar.json.lock
+*.progress.json
+*.progress.json.lock
+profile.toml
+# Local course exports (including custom output names)
+/*.json

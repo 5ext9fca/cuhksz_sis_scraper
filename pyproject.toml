@@ -1,0 +1,22 @@
+[project]
+name = "sis-scrawler"
+version = "0.1.0"
+description = "Export CUHK(SZ) SIS course schedules with Playwright"
+readme = "README.md"
+license = "AGPL-3.0-only"
+license-files = ["LICENSE"]
+requires-python = ">=3.10"
+dependencies = [
+    "beautifulsoup4>=4.12,<5",
+    "filelock>=3.13,<4",
+    "playwright>=1.51,<2",
+    "tomli>=2 ; python_full_version < '3.11'",
+]
+
+[project.scripts]
+sis-export = "sis_scrawler.cli:main"
+sis-catalog = "sis_scrawler.cli:catalog_main"
+
+[build-system]
+requires = ["uv_build>=0.11.8,<0.12.0"]
+build-backend = "uv_build"
