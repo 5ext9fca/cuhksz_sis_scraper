@@ -14,7 +14,7 @@ class LoginRequired(ScheduleError):
 
 def _school_login(url: str) -> bool:
     location = urlsplit(url)
-    return (location.scheme == "https" and location.netloc == "sts.cuhk.edu.cn"
+    return (location.scheme == "https" and location.netloc.lower() in {"sts.cuhk.edu.cn", "sts.cuhk.edu.cn:443"}
             and location.path.rstrip("/") == "/adfs/oauth2/authorize")
 
 

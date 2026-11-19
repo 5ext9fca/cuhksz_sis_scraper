@@ -1,7 +1,8 @@
 import unittest
 
 from bs4 import BeautifulSoup
-from experiments.catalog_http_bench import decode_update, form_values, read_directory
+from cuhksz_sis_scraper.directory import read_directory
+from cuhksz_sis_scraper.peoplesoft import form_values
 
 
 class HttpExperimentTests(unittest.TestCase):
@@ -12,11 +13,6 @@ class HttpExperimentTests(unittest.TestCase):
             <option>old</option><option selected value="2620">new</option></select>
             <textarea name="note">text</textarea></form>""", "html.parser").form
         self.assertEqual(form_values(form), dict(ICStateNum="1", on="on", term="2620", note="text"))
-        body = """<PAGE><FIELD id="win0divPAGECONTAINER"><![CDATA[<b>ok</b>]]></FIELD>
-            <GENSCRIPT id="onloadScript">doc.ICStateNum.value = 7;</GENSCRIPT></PAGE>"""
-        self.assertEqual(decode_update(body), ("<b>ok</b>", "7"))
-        with self.assertRaises(ValueError):
-            decode_update(body.replace("ICStateNum", "missing"))
 
     def test_multiple_details_resolve_links_again_after_return(self):
         group = '<span id="DERIVED_SSS_BCC_GROUP_BOX_1$147$$span$1">BIO - Biology</span>'

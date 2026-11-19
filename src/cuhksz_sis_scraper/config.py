@@ -42,6 +42,7 @@ class Profile:
     major: str = ""
     cohort: int | None = None
     stream: str = ""
+    source: Path = field(default_factory=lambda: Path("profile.toml").resolve(), repr=False, compare=False)
 
     @classmethod
     def load(cls, source: "Profile | str | Path | None" = None) -> "Profile":
@@ -57,7 +58,7 @@ class Profile:
         if cohort is not None and (type(cohort) is not int or not 1000 <= cohort <= 9999):
             raise ScheduleError("cohort 应为四位入学年份，例如 2025。")
         return cls(username, password, _string(data, "major").strip(), cohort,
-                   _string(data, "stream").strip())
+                   _string(data, "stream").strip(), path.resolve())
 
 
 @dataclass(frozen=True)
